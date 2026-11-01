@@ -5,31 +5,25 @@ package com.ifitwereyou.character.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -46,6 +40,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ifitwereyou.character.BuildConfig
 import com.ifitwereyou.character.ai.AI_PRESETS
 import com.ifitwereyou.character.ai.AiPreset
 import com.ifitwereyou.character.ui.AppViewModel
@@ -56,7 +51,7 @@ import com.ifitwereyou.character.ui.components.Chip
 import com.ifitwereyou.character.ui.components.EmberButton
 import com.ifitwereyou.character.ui.components.GhostButton
 import com.ifitwereyou.character.ui.components.NoticeBanner
-import com.ifitwereyou.character.ui.components.ScreenHeader
+import com.ifitwereyou.character.ui.components.ScreenScaffold
 import com.ifitwereyou.character.ui.components.appTextFieldColors
 import com.ifitwereyou.character.ui.theme.Amber
 import com.ifitwereyou.character.ui.theme.AmberLight
@@ -71,29 +66,64 @@ import com.ifitwereyou.character.ui.theme.Secondary
 fun SettingsScreen(viewModel: AppViewModel) {
     val state by viewModel.settingsState.collectAsStateWithLifecycle()
     var showApiKey by rememberSaveable { mutableStateOf(false) }
+    var showClearConfirm by rememberSaveable { mutableStateOf(false) }
     val busy = state.busy != null
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 30.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = viewModel::closeSettings) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = Muted)
-            }
-            Spacer(Modifier.width(4.dp))
-            Box(modifier = Modifier.weight(1f)) {
-                ScreenHeader(
-                    title = "AI 设置",
-                    icon = Icons.Outlined.Settings,
-                    subtitle = "配置 OpenAI 兼容服务，设置只保存在本机",
-                )
-            }
-        }
-        Spacer(Modifier.height(20.dp))
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            containerColor = Card,
+            titleContentColor = Parchment,
+            textContentColor = Muted,
+            title = { Text("清除 AI 配置？") },
+            text = { Text("Base URL、API Key 与模型名都会从本机删除，之后需要重新填写。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearConfirm = false
+                        viewModel.clearSettings()
+                    },
+                ) {
+                    Text("清除", color = Crimson)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) {
+                    Text("取消", color = Muted)
+                }
+            },
+        )
+    }
 
+    ScreenScaffold(
+        title = "AI 设置",
+        subtitle = "配置只保存在本机，不会上传",
+        onBack = viewModel::closeSettings,
+        bottomBar = {
+            Column {
+                state.notice?.let { notice ->
+                    NoticeBanner(notice)
+                    Spacer(Modifier.height(8.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GhostButton(
+                        text = if (state.busy == SettingsBusy.TEST) "测试中…" else "测试连接",
+                        icon = Icons.Outlined.CheckCircle,
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                        onClick = viewModel::testConnection,
+                    )
+                    EmberButton(
+                        text = if (busy) "请稍候…" else "保存设置",
+                        icon = Icons.Outlined.Check,
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                        onClick = viewModel::saveSettings,
+                    )
+                }
+            }
+        },
+    ) {
         CardBox(backgroundColor = Card) {
             Column {
                 Text("服务商预设", style = MaterialTheme.typography.titleMedium, color = Parchment)
@@ -240,11 +270,6 @@ fun SettingsScreen(viewModel: AppViewModel) {
             }
         }
 
-        state.notice?.let { notice ->
-            Spacer(Modifier.height(14.dp))
-            NoticeBanner(notice)
-        }
-
         Spacer(Modifier.height(16.dp))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(9.dp),
@@ -257,21 +282,9 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 onClick = viewModel::fetchModels,
             )
             GhostButton(
-                text = if (state.busy == SettingsBusy.TEST) "测试中…" else "测试连接",
-                icon = Icons.Outlined.CheckCircle,
-                enabled = !busy,
-                onClick = viewModel::testConnection,
-            )
-            EmberButton(
-                text = if (state.busy == SettingsBusy.TEST) "请稍候…" else "保存设置",
-                icon = Icons.Outlined.Check,
-                enabled = !busy,
-                onClick = viewModel::saveSettings,
-            )
-            GhostButton(
                 text = "清除配置",
                 enabled = !busy,
-                onClick = viewModel::clearSettings,
+                onClick = { showClearConfirm = true },
             )
         }
         if (state.busy != null) {
@@ -307,6 +320,17 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 color = Muted.copy(alpha = 0.75f),
             )
         }
+
+        Spacer(Modifier.height(18.dp))
+        Text(
+            text = "假如是你 v${BuildConfig.VERSION_NAME} · 单机版",
+            style = MaterialTheme.typography.labelSmall,
+            color = Muted.copy(alpha = 0.5f),
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        // 提示条会临时撑高吸底操作栏，留出余量避免最后一段内容被遮住。
+        Spacer(Modifier.height(64.dp))
     }
 }
 

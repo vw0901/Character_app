@@ -13,10 +13,8 @@ import com.ifitwereyou.character.data.SettingBible
 import com.ifitwereyou.character.data.StatValues
 import com.ifitwereyou.character.data.StoryGoal
 import com.ifitwereyou.character.data.StoryTimeline
-import com.ifitwereyou.character.data.asArray
 import com.ifitwereyou.character.data.asRecord
 import com.ifitwereyou.character.data.clipCodePoints
-import com.ifitwereyou.character.data.normalizeBible
 import com.ifitwereyou.character.data.parseJsonLoose
 import com.ifitwereyou.character.data.text
 import org.json.JSONArray

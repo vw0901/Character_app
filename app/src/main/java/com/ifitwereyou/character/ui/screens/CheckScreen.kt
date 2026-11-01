@@ -17,13 +17,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Icon
@@ -33,9 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ifitwereyou.character.data.CheckIssue
 import com.ifitwereyou.character.data.CheckResult
@@ -47,9 +44,11 @@ import com.ifitwereyou.character.ui.components.EmberButton
 import com.ifitwereyou.character.ui.components.GhostButton
 import com.ifitwereyou.character.ui.components.InlineError
 import com.ifitwereyou.character.ui.components.LoadingBlock
-import com.ifitwereyou.character.ui.components.SaveStateText
+import com.ifitwereyou.character.ui.components.MenuAction
+import com.ifitwereyou.character.ui.components.OverflowMenu
 import com.ifitwereyou.character.ui.components.ScoreRing
-import com.ifitwereyou.character.ui.components.ScreenHeader
+import com.ifitwereyou.character.ui.components.ScreenScaffold
+import com.ifitwereyou.character.ui.components.TopBarIcon
 import com.ifitwereyou.character.ui.theme.Amber
 import com.ifitwereyou.character.ui.theme.Border
 import com.ifitwereyou.character.ui.theme.Card
@@ -58,7 +57,6 @@ import com.ifitwereyou.character.ui.theme.Forest
 import com.ifitwereyou.character.ui.theme.Muted
 import com.ifitwereyou.character.ui.theme.Parchment
 import com.ifitwereyou.character.ui.theme.Sage
-import com.ifitwereyou.character.ui.theme.Secondary
 
 @Composable
 fun CheckScreen(
@@ -77,27 +75,38 @@ fun CheckScreen(
         return
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 18.dp, end = 18.dp, top = 58.dp, bottom = 30.dp),
+    val result = document.check
+    val novelTitle = document.bible?.novelName?.ifBlank { document.novelName } ?: document.novelName
+    ScreenScaffold(
+        title = "漏洞体检",
+        subtitle = "《$novelTitle》 · ${saveState.label}",
+        onBack = viewModel::goHome,
+        actions = {
+            TopBarIcon(
+                icon = Icons.Outlined.Share,
+                contentDescription = "导出存档",
+                onClick = onExport,
+            )
+            OverflowMenu(
+                items = listOf(
+                    MenuAction("查看设定圣经", onClick = viewModel::openBible),
+                    MenuAction("AI 设置", onClick = viewModel::openSettings),
+                ),
+            )
+        },
+        bottomBar = if (result != null) {
+            {
+                EmberButton(
+                    text = if (document.repair != null) "以修补后的设定开始冒险" else "开始文字冒险",
+                    icon = Icons.Outlined.PlayArrow,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = viewModel::startGameScreen,
+                )
+            }
+        } else {
+            null
+        },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SaveStateText(saveState)
-            Spacer(Modifier.weight(1f))
-            GhostButton(text = "导出", onClick = onExport)
-        }
-        Spacer(Modifier.height(18.dp))
-
-        ScreenHeader(
-            title = "漏洞体检报告",
-            icon = Icons.Outlined.Warning,
-            subtitle = "对《${document.bible?.novelName ?: document.novelName}》的设定圣经进行全面审计",
-        )
-        Spacer(Modifier.height(20.dp))
-
-        val result = document.check
         when {
             state.isChecking && result == null -> {
                 LoadingBlock(
@@ -132,7 +141,6 @@ fun CheckScreen(
                     skipRepair = state.skipRepair,
                     onRetryRepair = viewModel::retryRepair,
                     onSkipRepair = viewModel::skipRepair,
-                    onStartGame = viewModel::startGameScreen,
                 )
             }
         }
@@ -149,7 +157,6 @@ private fun CheckResultContent(
     skipRepair: Boolean,
     onRetryRepair: () -> Unit,
     onSkipRepair: () -> Unit,
-    onStartGame: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardBox(
@@ -313,21 +320,13 @@ private fun CheckResultContent(
             }
         }
 
-        Spacer(Modifier.height(10.dp))
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            EmberButton(
-                text = if (document.repair != null) "以修补后的设定开始冒险" else "开始文字冒险",
-                icon = Icons.Outlined.PlayArrow,
-                onClick = onStartGame,
+        if (document.repair == null && !isRepairing && repairError.isBlank()) {
+            Spacer(Modifier.height(2.dp))
+            GhostButton(
+                text = "跳过修补，直接用原始设定",
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onSkipRepair,
             )
-            if (document.repair == null && !isRepairing && repairError.isBlank()) {
-                Spacer(Modifier.height(10.dp))
-                GhostButton(text = "跳过修补，直接用原始设定", onClick = onSkipRepair)
-            }
-            Spacer(Modifier.height(20.dp))
         }
     }
 }

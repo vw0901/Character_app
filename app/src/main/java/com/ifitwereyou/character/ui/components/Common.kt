@@ -5,39 +5,57 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,13 +65,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.ifitwereyou.character.data.SaveState
 import com.ifitwereyou.character.ui.Notice
 import com.ifitwereyou.character.ui.NoticeKind
 import com.ifitwereyou.character.ui.theme.Amber
-import com.ifitwereyou.character.ui.theme.AmberLight
 import com.ifitwereyou.character.ui.theme.Border
 import com.ifitwereyou.character.ui.theme.Card
 import com.ifitwereyou.character.ui.theme.Crimson
@@ -105,7 +122,7 @@ fun EmberButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier,
+        modifier = modifier.defaultMinSize(minHeight = 48.dp),
         shape = MaterialTheme.shapes.medium,
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
         colors = ButtonDefaults.buttonColors(
@@ -134,7 +151,7 @@ fun GhostButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier,
+        modifier = modifier.defaultMinSize(minHeight = 48.dp),
         shape = MaterialTheme.shapes.medium,
         border = BorderStroke(1.dp, Border),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
@@ -220,19 +237,160 @@ fun SectionCard(
     }
 }
 
+/**
+ * 手机端统一顶栏：返回键 + 标题/副标题 + 右侧操作。
+ * 不重复消费状态栏 inset，由外层 App 统一处理安全区。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScreenHeader(
+fun AppTopBar(
     title: String,
-    icon: ImageVector,
     subtitle: String? = null,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, contentDescription = null, tint = Amber, modifier = Modifier.size(30.dp))
-        Spacer(Modifier.width(12.dp))
-        Column {
-            Text(title, style = MaterialTheme.typography.headlineMedium, color = Parchment)
-            if (!subtitle.isNullOrBlank()) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Muted)
+    Column(Modifier.fillMaxWidth()) {
+        TopAppBar(
+            title = {
+                Column(Modifier.fillMaxWidth()) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Parchment,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            },
+            navigationIcon = {
+                if (onBack != null) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "返回",
+                            tint = Parchment,
+                        )
+                    }
+                }
+            },
+            actions = actions,
+            windowInsets = WindowInsets(0, 0, 0, 0),
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = Ink.copy(alpha = 0.93f),
+                titleContentColor = Parchment,
+                navigationIconContentColor = Parchment,
+                actionIconContentColor = Parchment,
+            ),
+        )
+        HorizontalDivider(color = Border.copy(alpha = 0.8f))
+    }
+}
+
+/** 顶栏右侧的标准 48dp 图标按钮。 */
+@Composable
+fun TopBarIcon(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick, enabled = enabled) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) Parchment else Muted.copy(alpha = 0.35f),
+        )
+    }
+}
+
+data class MenuAction(
+    val label: String,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+/** 顶栏「更多」菜单，用来收纳低频或危险操作。 */
+@Composable
+fun OverflowMenu(items: List<MenuAction>) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TopBarIcon(
+            icon = Icons.Outlined.MoreVert,
+            contentDescription = "更多操作",
+            onClick = { expanded = true },
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(Card),
+        ) {
+            items.forEach { item ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = item.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (item.enabled) Parchment else Muted.copy(alpha = 0.4f),
+                        )
+                    },
+                    enabled = item.enabled,
+                    onClick = {
+                        expanded = false
+                        item.onClick()
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 标准页面壳：固定顶栏 + 可滚动正文 + 可选吸底主操作。
+ * 正文底部会预留底部操作栏的高度，避免最后一块内容被遮住。
+ */
+@Composable
+fun ScreenScaffold(
+    title: String,
+    subtitle: String? = null,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+    bottomBar: (@Composable () -> Unit)? = null,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        AppTopBar(title = title, subtitle = subtitle, onBack = onBack, actions = actions)
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(contentPadding)
+                    .padding(bottom = if (bottomBar == null) 16.dp else 84.dp),
+                content = content,
+            )
+            if (bottomBar != null) {
+                Surface(
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                    color = Ink,
+                    shadowElevation = 16.dp,
+                ) {
+                    Column {
+                        HorizontalDivider(color = Border)
+                        Box(Modifier.padding(horizontal = 18.dp, vertical = 10.dp)) {
+                            bottomBar()
+                        }
+                    }
+                }
             }
         }
     }
@@ -315,11 +473,13 @@ fun Chip(
     val click = if (onClick != null) Modifier.clickable { onClick() } else Modifier
     Box(
         modifier = modifier
+            .defaultMinSize(minHeight = 40.dp)
             .clip(shape)
             .background(if (filled) color else color.copy(alpha = 0.09f))
             .border(1.dp, color.copy(alpha = if (filled) 1f else 0.30f), shape)
             .then(click)
-            .padding(horizontal = 11.dp, vertical = 6.dp),
+            .padding(horizontal = 13.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
@@ -409,22 +569,6 @@ fun LoadingBlock(
 }
 
 @Composable
-fun EmptyHint(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = Muted.copy(alpha = 0.8f),
-        modifier = modifier.fillMaxWidth(),
-        textAlign = TextAlign.Center,
-    )
-}
-
-@Composable
-fun RowSpacer(width: Int = 8) {
-    Spacer(Modifier.width(width.dp))
-}
-
-@Composable
 fun CompactAction(
     text: String,
     icon: ImageVector? = null,
@@ -432,9 +576,10 @@ fun CompactAction(
 ) {
     Row(
         modifier = Modifier
+            .defaultMinSize(minHeight = 40.dp)
             .clip(RoundedCornerShape(5.dp))
             .clickable { onClick() }
-            .padding(horizontal = 6.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
@@ -470,46 +615,6 @@ fun appTextFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
-fun RefreshRow(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(5.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Outlined.Refresh, contentDescription = null, tint = Amber, modifier = Modifier.size(14.dp))
-        Spacer(Modifier.width(4.dp))
-        Text(text, style = MaterialTheme.typography.labelSmall, color = Amber)
-    }
-}
-
-@Composable
-fun DividerLine(modifier: Modifier = Modifier) {
-    androidx.compose.material3.HorizontalDivider(color = Border, modifier = modifier)
-}
-
-@Composable
-fun HintText(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = Muted,
-        modifier = modifier,
-    )
-}
-
-@Composable
-fun SectionLabel(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = Amber,
-        modifier = modifier,
-    )
-}
-
-@Composable
 fun ScoreRing(score: Int, modifier: Modifier = Modifier) {
     val color = when {
         score >= 80 -> Forest
@@ -540,15 +645,4 @@ fun ScoreRing(score: Int, modifier: Modifier = Modifier) {
         }
         Text("$score", style = MaterialTheme.typography.titleLarge, color = color)
     }
-}
-
-@Composable
-fun AmberLabel(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = AmberLight,
-        letterSpacing = 0.5.sp,
-        modifier = modifier,
-    )
 }

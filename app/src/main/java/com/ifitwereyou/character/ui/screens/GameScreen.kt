@@ -4,7 +4,6 @@ package com.ifitwereyou.character.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,8 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Book
@@ -37,9 +35,10 @@ import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Icon
@@ -57,8 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -71,7 +70,6 @@ import com.ifitwereyou.character.data.GameState
 import com.ifitwereyou.character.data.HistoryType
 import com.ifitwereyou.character.data.ProjectDocument
 import com.ifitwereyou.character.data.Scene
-import com.ifitwereyou.character.data.SettingBible
 import com.ifitwereyou.character.data.StatValues
 import com.ifitwereyou.character.data.StoryGoal
 import com.ifitwereyou.character.data.StoryTimeline
@@ -80,6 +78,7 @@ import com.ifitwereyou.character.game.daysRemaining
 import com.ifitwereyou.character.ui.AppViewModel
 import com.ifitwereyou.character.ui.GameUiState
 import com.ifitwereyou.character.ui.components.AppSpinner
+import com.ifitwereyou.character.ui.components.AppTopBar
 import com.ifitwereyou.character.ui.components.CardBox
 import com.ifitwereyou.character.ui.components.Chip
 import com.ifitwereyou.character.ui.components.CompactAction
@@ -87,12 +86,14 @@ import com.ifitwereyou.character.ui.components.EmberButton
 import com.ifitwereyou.character.ui.components.GhostButton
 import com.ifitwereyou.character.ui.components.InlineError
 import com.ifitwereyou.character.ui.components.LoadingBlock
+import com.ifitwereyou.character.ui.components.MenuAction
+import com.ifitwereyou.character.ui.components.OverflowMenu
 import com.ifitwereyou.character.ui.components.SaveStateText
-import com.ifitwereyou.character.ui.components.ScreenHeader
+import com.ifitwereyou.character.ui.components.ScreenScaffold
 import com.ifitwereyou.character.ui.components.StatMeter
+import com.ifitwereyou.character.ui.components.TopBarIcon
 import com.ifitwereyou.character.ui.components.appTextFieldColors
 import com.ifitwereyou.character.ui.theme.Amber
-import com.ifitwereyou.character.ui.theme.AmberLight
 import com.ifitwereyou.character.ui.theme.Border
 import com.ifitwereyou.character.ui.theme.Card
 import com.ifitwereyou.character.ui.theme.Crimson
@@ -130,7 +131,11 @@ fun GameScreen(
             onStartBook = viewModel::startBook,
             onOpenBook = viewModel::openBook,
             onExport = onExport,
-            onRestart = viewModel::restartProject,
+            onBack = { viewModel.handleBack() },
+            onOpenSettings = viewModel::openSettings,
+            onHome = viewModel::goHome,
+            onOpenBible = viewModel::openBible,
+            onOpenCheck = viewModel::openCheck,
         )
     } else {
         GamePlayContent(
@@ -138,6 +143,10 @@ fun GameScreen(
             book = book,
             ui = ui,
             saveState = saveState,
+            onBack = { viewModel.handleBack() },
+            onHome = viewModel::goHome,
+            onOpenBible = viewModel::openBible,
+            onOpenCheck = viewModel::openCheck,
             onUndo = viewModel::undo,
             onExport = onExport,
             onSwitchCharacter = { viewModel.leaveBook() },
@@ -167,7 +176,11 @@ private fun CharacterSelectContent(
     onStartBook: (CharacterChoice) -> Unit,
     onOpenBook: (String) -> Unit,
     onExport: () -> Unit,
-    onRestart: () -> Unit,
+    onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onHome: () -> Unit,
+    onOpenBible: () -> Unit,
+    onOpenCheck: () -> Unit,
 ) {
     val bible = document.repair?.bible ?: document.bible
     val characters = bible?.characters.orEmpty()
@@ -180,26 +193,30 @@ private fun CharacterSelectContent(
     var customAbilities by rememberSaveable { mutableStateOf("") }
     var customPersonality by rememberSaveable { mutableStateOf("") }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 18.dp, end = 18.dp, top = 58.dp, bottom = 30.dp),
+    ScreenScaffold(
+        title = "选择故事书",
+        subtitle = "每个角色一本独立故事书 · ${saveState.label}",
+        onBack = onBack,
+        actions = {
+            TopBarIcon(
+                icon = Icons.Outlined.Share,
+                contentDescription = "导出存档",
+                onClick = onExport,
+            )
+            OverflowMenu(
+                items = listOf(
+                    MenuAction("查看设定圣经", onClick = onOpenBible),
+                    MenuAction(
+                        label = "查看体检报告",
+                        enabled = document.check != null,
+                        onClick = onOpenCheck,
+                    ),
+                    MenuAction("返回书架", onClick = onHome),
+                    MenuAction("AI 设置", onClick = onOpenSettings),
+                ),
+            )
+        },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SaveStateText(saveState)
-            Spacer(Modifier.weight(1f))
-            GhostButton(text = "导出存档", onClick = onExport)
-            Spacer(Modifier.width(8.dp))
-            GhostButton(text = "重新开始", onClick = onRestart)
-        }
-        Spacer(Modifier.height(18.dp))
-        ScreenHeader(
-            title = "选择你的故事书",
-            icon = Icons.AutoMirrored.Outlined.MenuBook,
-            subtitle = "每个人物都有独立的故事书，切换角色不会丢失当前进度",
-        )
-        Spacer(Modifier.height(10.dp))
         val repairCount = document.repair?.appliedFixes?.size ?: 0
         if (repairCount > 0) {
             Text(
@@ -207,15 +224,16 @@ private fun CharacterSelectContent(
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted,
             )
+            Spacer(Modifier.height(14.dp))
         } else if (!characters.isEmpty()) {
             Text(
                 "从小说设定中挑选一位人物，以第一人称进入属于 TA 的故事。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted,
             )
+            Spacer(Modifier.height(14.dp))
         }
 
-        Spacer(Modifier.height(18.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ModeButton(
                 text = "扮演故事角色",
@@ -362,6 +380,28 @@ private fun CharacterSelectContent(
                 }
             }
         }
+
+        Spacer(Modifier.height(24.dp))
+        CardBox(
+            backgroundColor = Card.copy(alpha = 0.35f),
+            borderColor = Border.copy(alpha = 0.7f),
+            padding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Outlined.Info,
+                    contentDescription = null,
+                    tint = Muted,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    "每个角色一本故事书，进度会自动保存在本机；返回书架不会丢失任何角色进度。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Muted,
+                )
+            }
+        }
         Spacer(Modifier.height(26.dp))
     }
 }
@@ -374,7 +414,7 @@ private fun ModeButton(
     onClick: () -> Unit,
 ) {
     CardBox(
-        modifier = modifier,
+        modifier = modifier.heightIn(min = 48.dp),
         backgroundColor = if (selected) Amber else Card,
         borderColor = if (selected) Amber else Border,
         onClick = onClick,
@@ -395,9 +435,13 @@ private fun CharacterCard(
     book: AdventureState?,
     onClick: () -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     CardBox(
         backgroundColor = Card,
-        onClick = onClick,
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            onClick()
+        },
         padding = PaddingValues(15.dp),
     ) {
         Column {
@@ -419,6 +463,19 @@ private fun CharacterCard(
                         color = Amber,
                     )
                 }
+                Chip(
+                    text = when {
+                        book == null -> "新故事"
+                        book.outcome == AdventureOutcome.PLAYING -> "继续"
+                        else -> "已完结"
+                    },
+                    color = when {
+                        book == null -> Forest
+                        book.outcome == AdventureOutcome.PLAYING -> Amber
+                        else -> Muted
+                    },
+                )
+                Spacer(Modifier.width(4.dp))
                 Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = Muted, modifier = Modifier.size(19.dp))
             }
             if (character.abilities.isNotBlank()) {
@@ -440,9 +497,9 @@ private fun CharacterCard(
             Spacer(Modifier.height(7.dp))
             Text(
                 when {
-                    book == null -> "开始新的故事书 ›"
-                    book.outcome == AdventureOutcome.PLAYING -> "继续这本故事书 ›"
-                    else -> "回看已完结的故事 ›"
+                    book == null -> "点按扮演这位角色，开启新的故事书"
+                    book.outcome == AdventureOutcome.PLAYING -> "点按继续这本故事书"
+                    else -> "点按回看已完结的故事"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = Amber.copy(alpha = 0.85f),
@@ -486,6 +543,10 @@ private fun GamePlayContent(
     book: AdventureState,
     ui: GameUiState,
     saveState: com.ifitwereyou.character.data.SaveState,
+    onBack: () -> Unit,
+    onHome: () -> Unit,
+    onOpenBible: () -> Unit,
+    onOpenCheck: () -> Unit,
     onUndo: () -> Unit,
     onExport: () -> Unit,
     onSwitchCharacter: () -> Unit,
@@ -506,129 +567,129 @@ private fun GamePlayContent(
     val title = game?.title?.takeIf { it.isNotBlank() } ?: document.novelName.ifBlank { "文字冒险" }
     val typingNow = ui.isTyping || (ui.narration.isNotEmpty() && ui.displayedText != ui.narration)
     val ended = book.outcome != AdventureOutcome.PLAYING
+    val turnLabel = if (book.turn == 0) "序章" else "第 ${book.turn} 回合"
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 16.dp, end = 16.dp, top = 58.dp, bottom = 30.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(Secondary, MaterialTheme.shapes.medium),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Outlined.PlayArrow, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
-            }
-            Spacer(Modifier.width(11.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleLarge, color = Parchment)
-                Text("扮演：${book.character.name}", style = MaterialTheme.typography.labelSmall, color = Amber)
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
+    Column(Modifier.fillMaxSize()) {
+        AppTopBar(
+            title = title,
+            subtitle = "扮演：${book.character.name} · $turnLabel",
+            onBack = onBack,
+            actions = {
+                TopBarIcon(
+                    icon = Icons.AutoMirrored.Outlined.Undo,
+                    contentDescription = "回退一步",
+                    enabled = canUndo,
+                    onClick = onUndo,
+                )
+                OverflowMenu(
+                    items = listOf(
+                        MenuAction("导出存档", onClick = onExport),
+                        MenuAction(
+                            label = "查看设定圣经",
+                            enabled = document.bible != null,
+                            onClick = onOpenBible,
+                        ),
+                        MenuAction(
+                            label = "查看体检报告",
+                            enabled = document.check != null,
+                            onClick = onOpenCheck,
+                        ),
+                        MenuAction("切换角色", enabled = !ui.busy, onClick = onSwitchCharacter),
+                        MenuAction("返回书架", onClick = onHome),
+                        MenuAction("AI 设置", onClick = onOpenSettings),
+                    ),
+                )
+            },
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 26.dp),
         ) {
-            GhostButton(
-                text = "回退",
-                icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                enabled = canUndo,
-                onClick = onUndo,
-            )
-            GhostButton(text = "导出", onClick = onExport)
-            GhostButton(
-                text = "切换角色",
-                icon = Icons.Outlined.Person,
-                enabled = !ui.busy,
-                onClick = onSwitchCharacter,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SaveStateText(saveState)
-            Spacer(Modifier.weight(1f))
-            Text(
-                "第 ${book.turn} 回合 · 可回退 ${if (completed) 0 else book.snapshots.size} 步",
-                style = MaterialTheme.typography.labelSmall,
-                color = Muted,
-            )
-        }
-        Spacer(Modifier.height(14.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SaveStateText(saveState)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "可回退 ${if (completed) 0 else book.snapshots.size} 步",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Muted,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
 
-        StoryStatusCard(book.goal, book.timeline, book.outcome)
+            StoryStatusCard(book.goal, book.timeline, book.outcome)
 
-        if (ui.isInitializing) {
-            LoadingBlock(
-                title = "正在生成冒险世界…",
-                subtitle = "以 ${book.character.name} 的身份，为 TA 定下最终目标与时间线",
-            )
-        } else if (game == null) {
-            if (ui.error.isNotBlank()) {
-                InlineError(ui.error, onOpenSettings = onOpenSettings)
-                Spacer(Modifier.height(14.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GhostButton(
-                        text = "重新生成开场",
-                        icon = Icons.Outlined.Refresh,
-                        onClick = onRetryOpening,
-                    )
-                    GhostButton(text = "前往 AI 设置", onClick = onOpenSettings)
-                    GhostButton(text = "更换故事书", onClick = onSwitchCharacter)
+            if (ui.isInitializing) {
+                LoadingBlock(
+                    title = "正在生成冒险世界…",
+                    subtitle = "以 ${book.character.name} 的身份，为 TA 定下最终目标与时间线",
+                )
+            } else if (game == null) {
+                if (ui.error.isNotBlank()) {
+                    InlineError(ui.error, onOpenSettings = onOpenSettings)
+                    Spacer(Modifier.height(14.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GhostButton(
+                            text = "重新生成开场",
+                            icon = Icons.Outlined.Refresh,
+                            onClick = onRetryOpening,
+                        )
+                        GhostButton(text = "前往 AI 设置", onClick = onOpenSettings)
+                        GhostButton(text = "更换故事书", onClick = onSwitchCharacter)
+                    }
                 }
-            }
-        } else {
-            if (!ended) {
+            } else {
+                if (!ended) {
+                    Spacer(Modifier.height(12.dp))
+                    StatsCard(book.stats)
+                }
+
                 Spacer(Modifier.height(12.dp))
-                StatsCard(book.stats)
-            }
-
-            Spacer(Modifier.height(12.dp))
-            GameLog(
-                book = book,
-                ui = ui,
-                typingNow = typingNow,
-                onSkipTyping = onSkipTyping,
-            )
-
-            if (ui.error.isNotBlank() && !ui.isProcessing) {
-                Spacer(Modifier.height(10.dp))
-                InlineError(ui.error, onOpenSettings = onOpenSettings)
-            }
-
-            if (ended) {
-                Spacer(Modifier.height(18.dp))
-                OutcomePanel(
+                GameLog(
                     book = book,
                     ui = ui,
-                    canUndo = canUndo,
-                    onUndo = onUndo,
-                    onRewriteEpilogue = onRewriteEpilogue,
-                    onRestartBook = onRestartBook,
-                    onLeave = onLeave,
+                    typingNow = typingNow,
+                    onSkipTyping = onSkipTyping,
                 )
-            } else if (!ui.isProcessing && !typingNow) {
-                Spacer(Modifier.height(14.dp))
-                ChoiceList(
-                    scene = game.currentScene,
-                    onChoice = onChoose,
-                )
-                Spacer(Modifier.height(12.dp))
-                CustomChoice(
-                    ui = ui,
-                    onTextChange = onCustomTextChange,
-                    onPolish = onPolish,
-                    onRestore = onRestoreCustom,
-                    onSubmit = {
-                        onChoose("custom_${book.turn}", ui.customText.trim())
-                    },
-                )
+
+                if (ui.error.isNotBlank() && !ui.isProcessing) {
+                    Spacer(Modifier.height(10.dp))
+                    InlineError(ui.error, onOpenSettings = onOpenSettings)
+                }
+
+                if (ended) {
+                    Spacer(Modifier.height(18.dp))
+                    OutcomePanel(
+                        book = book,
+                        ui = ui,
+                        canUndo = canUndo,
+                        onUndo = onUndo,
+                        onRewriteEpilogue = onRewriteEpilogue,
+                        onRestartBook = onRestartBook,
+                        onLeave = onLeave,
+                    )
+                } else if (!ui.isProcessing && !typingNow) {
+                    Spacer(Modifier.height(14.dp))
+                    ChoiceList(
+                        scene = game.currentScene,
+                        onChoice = onChoose,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    CustomChoice(
+                        ui = ui,
+                        onTextChange = onCustomTextChange,
+                        onPolish = onPolish,
+                        onRestore = onRestoreCustom,
+                        onSubmit = {
+                            onChoose("custom_${book.turn}", ui.customText.trim())
+                        },
+                    )
+                }
             }
+            Spacer(Modifier.height(24.dp))
         }
-        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -729,7 +790,7 @@ private fun GameLog(
                 state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 240.dp, max = 390.dp),
+                    .heightIn(min = 170.dp, max = 390.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 itemsIndexed(history) { index, entry ->
@@ -806,6 +867,7 @@ private fun ChoiceList(
     scene: Scene,
     onChoice: (String, String) -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "当前位置: ${scene.location}",
@@ -815,7 +877,10 @@ private fun ChoiceList(
         scene.choices.forEach { choice ->
             CardBox(
                 backgroundColor = Card,
-                onClick = { onChoice(choice.id, choice.text) },
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onChoice(choice.id, choice.text)
+                },
                 padding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

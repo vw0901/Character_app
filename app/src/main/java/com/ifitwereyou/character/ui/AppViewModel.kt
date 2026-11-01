@@ -20,7 +20,6 @@ import com.ifitwereyou.character.ai.initialSettingsForm
 import com.ifitwereyou.character.data.AdventureOutcome
 import com.ifitwereyou.character.data.AdventureState
 import com.ifitwereyou.character.data.CharacterChoice
-import com.ifitwereyou.character.data.CheckResult
 import com.ifitwereyou.character.data.EndingType
 import com.ifitwereyou.character.data.HistoryEntry
 import com.ifitwereyou.character.data.HistoryType
@@ -34,7 +33,6 @@ import com.ifitwereyou.character.data.ProjectSummary
 import com.ifitwereyou.character.data.SaveState
 import com.ifitwereyou.character.data.SearchData
 import com.ifitwereyou.character.data.SettingBible
-import com.ifitwereyou.character.data.StatChange
 import com.ifitwereyou.character.data.phaseForProject
 import com.ifitwereyou.character.data.createProjectFromSearch
 import com.ifitwereyou.character.data.normalizeBible
@@ -47,7 +45,6 @@ import com.ifitwereyou.character.data.nowIso
 import com.ifitwereyou.character.data.parseImportedJson
 import com.ifitwereyou.character.data.parseJsonLoose
 import com.ifitwereyou.character.data.projectFileName
-import com.ifitwereyou.character.game.DEFAULT_STATS
 import com.ifitwereyou.character.game.characterKey
 import com.ifitwereyou.character.game.createAdventure
 import com.ifitwereyou.character.game.detectGoalAchievedFromText
@@ -303,10 +300,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         resetTransientStates()
     }
 
-    fun restartProject() {
-        goHome()
-    }
-
     fun handleBack(): Boolean {
         return when (_screen.value) {
             Screen.HOME -> false
@@ -376,10 +369,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun setTavilyKey(value: String) = updateSettingsForm { it.copy(tavilyApiKey = value) }
 
     fun setSearchProvider(provider: String) = updateSettingsForm { it.copy(searchProvider = provider) }
-
-    fun dismissSettingsNotice() {
-        _settingsState.update { it.copy(notice = null) }
-    }
 
     private fun updateSettingsForm(transform: (AiConfig) -> AiConfig) {
         _settingsState.update { state ->
@@ -570,6 +559,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _checkState.update { it.copy(skipRepair = false) }
         _screen.value = Screen.CHECK
         ensureCheckAndRepair()
+    }
+
+    /** 从体检/冒险页回看已生成的设定圣经，不触发重新生成。 */
+    fun openBible() {
+        if (_project.value?.bible == null) return
+        _screen.value = Screen.BIBLE
+    }
+
+    /** 从冒险页回看体检报告，不触发重新体检。 */
+    fun openCheck() {
+        if (_project.value?.check == null) return
+        _screen.value = Screen.CHECK
     }
 
     // ------------------------------------------------------------------
@@ -1455,10 +1456,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             persistDocument(document)
             refreshProjects()
         }
-    }
-
-    fun scheduleSaveOnResume() {
-        if (_project.value != null && _saveState.value == SaveState.IDLE) scheduleSave()
     }
 
     private fun updateProject(transform: (ProjectDocument) -> ProjectDocument) {

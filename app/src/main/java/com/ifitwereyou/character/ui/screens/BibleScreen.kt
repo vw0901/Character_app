@@ -17,12 +17,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DateRange
@@ -30,6 +27,7 @@ import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,20 +46,20 @@ import com.ifitwereyou.character.data.Mystery
 import com.ifitwereyou.character.data.ProjectDocument
 import com.ifitwereyou.character.data.SettingBible
 import com.ifitwereyou.character.ui.AppViewModel
-import com.ifitwereyou.character.ui.components.AmberLabel
 import com.ifitwereyou.character.ui.components.CardBox
 import com.ifitwereyou.character.ui.components.Chip
 import com.ifitwereyou.character.ui.components.EmberButton
 import com.ifitwereyou.character.ui.components.GhostButton
 import com.ifitwereyou.character.ui.components.InlineError
 import com.ifitwereyou.character.ui.components.LoadingBlock
-import com.ifitwereyou.character.ui.components.SaveStateText
-import com.ifitwereyou.character.ui.components.ScreenHeader
+import com.ifitwereyou.character.ui.components.MenuAction
+import com.ifitwereyou.character.ui.components.OverflowMenu
+import com.ifitwereyou.character.ui.components.ScreenScaffold
 import com.ifitwereyou.character.ui.components.SectionCard
+import com.ifitwereyou.character.ui.components.TopBarIcon
 import com.ifitwereyou.character.ui.theme.Amber
 import com.ifitwereyou.character.ui.theme.AmberLight
 import com.ifitwereyou.character.ui.theme.Border
-import com.ifitwereyou.character.ui.theme.Card
 import com.ifitwereyou.character.ui.theme.Crimson
 import com.ifitwereyou.character.ui.theme.Forest
 import com.ifitwereyou.character.ui.theme.Muted
@@ -88,26 +86,43 @@ fun BibleScreen(
     }
 
     val bible = document.bible
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 18.dp, end = 18.dp, top = 58.dp, bottom = 30.dp),
+    val novelTitle = document.search?.novelName?.ifBlank { document.novelName } ?: document.novelName
+    ScreenScaffold(
+        title = "设定圣经",
+        subtitle = "《$novelTitle》 · ${saveState.label}",
+        onBack = viewModel::goHome,
+        actions = {
+            TopBarIcon(
+                icon = Icons.Outlined.Share,
+                contentDescription = "导出存档",
+                onClick = onExport,
+            )
+            OverflowMenu(
+                items = listOf(
+                    MenuAction(
+                        label = "查看体检报告",
+                        enabled = document.check != null,
+                        onClick = viewModel::openCheck,
+                    ),
+                    MenuAction("AI 设置", onClick = viewModel::openSettings),
+                    MenuAction("返回书架", onClick = viewModel::goHome),
+                ),
+            )
+        },
+        bottomBar = if (bible != null) {
+            {
+                val checked = document.check != null
+                EmberButton(
+                    text = if (checked) "查看漏洞体检报告" else "开始漏洞体检",
+                    icon = Icons.Outlined.Warning,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = if (checked) viewModel::openCheck else viewModel::startCheckScreen,
+                )
+            }
+        } else {
+            null
+        },
     ) {
-        Toolbar(
-            saveLabel = { SaveStateText(saveState) },
-            onExport = onExport,
-            onRestart = viewModel::restartProject,
-        )
-        Spacer(Modifier.height(18.dp))
-
-        ScreenHeader(
-            title = "设定圣经",
-            icon = Icons.AutoMirrored.Outlined.MenuBook,
-            subtitle = "从搜索结果中提取的世界观、人物与力量体系",
-        )
-        Spacer(Modifier.height(18.dp))
-
         BibleMeta(document, bible)
         if (bible != null && bible.synopsis.isNotBlank()) {
             Spacer(Modifier.height(16.dp))
@@ -182,35 +197,9 @@ fun BibleScreen(
                     expanded = state.expandedSections,
                     onToggle = viewModel::toggleBibleSection,
                 )
-                Spacer(Modifier.height(26.dp))
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    EmberButton(
-                        text = "开始漏洞体检",
-                        icon = Icons.Outlined.Warning,
-                        onClick = viewModel::startCheckScreen,
-                    )
-                }
-                Spacer(Modifier.height(30.dp))
+                Spacer(Modifier.height(12.dp))
             }
         }
-    }
-}
-
-@Composable
-private fun Toolbar(
-    saveLabel: @Composable () -> Unit,
-    onExport: () -> Unit,
-    onRestart: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        saveLabel()
-        Spacer(Modifier.weight(1f))
-        GhostButton(text = "导出", onClick = onExport)
-        Spacer(Modifier.width(8.dp))
-        GhostButton(text = "重新开始", onClick = onRestart)
     }
 }
 
