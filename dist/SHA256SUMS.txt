@@ -1,0 +1,1 @@
+99a9dd6c7ce4fa7cd2977ef1475cb4108879e71df950e109e10251b0874b17ee  character_app-debug.apk
