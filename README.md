@@ -18,7 +18,7 @@
 
 ## 界面
 
-截图来自 Android 15（API 35）模拟器。1.2.1 更新了故事栏、结局页与独立后日谈截图。
+截图来自 Android 15（API 35）模拟器，已按 1.2.1 全部重拍。
 
 | 书架 / 首页 | AI 设置 |
 |---|---|
@@ -42,7 +42,7 @@
 
 | 后日谈 · 独立后话 | 故事栏 · 已完结故事 |
 |---|---|
-| ![后日谈](docs/screenshots/14-epilogue.png) | ![已完结故事](docs/screenshots/10-stories.png) |
+| ![后日谈](docs/screenshots/14-epilogue.png) | ![已完结故事](docs/screenshots/15-stories-completed.png) |
 
 漏洞体检与自动修补已移除：设定圣经完成后，先选择角色，再从故事栏里挑一条命运进入故事。结局与后日谈分开：结局页自动总结，后日谈由玩家从结局页或已完结故事卡按需打开。
 
