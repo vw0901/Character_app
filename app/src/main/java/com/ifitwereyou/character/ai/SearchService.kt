@@ -2,8 +2,12 @@ package com.ifitwereyou.character.ai
 
 import com.ifitwereyou.character.data.SearchData
 import com.ifitwereyou.character.data.SearchResult
+import com.ifitwereyou.character.data.clipCodePoints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -32,50 +36,79 @@ class SearchService(
     suspend fun searchNovel(config: AiConfig, novelName: String): SearchData {
         // 先校验一次配置，保持原接口「未配置 AI 服务」的报错优先级。
         resolveAiConfig(config)
-        val query = "$novelName 小说 作者 完结状态 世界观设定"
+        val queries = listOf(
+            "$novelName 小说 作者 完结状态 类型 简介 结局",
+            "$novelName 世界观 力量体系 势力 人物关系 设定",
+            "$novelName 名场面 经典台词 剧情",
+        )
         var results: List<SearchResult> = emptyList()
-        var summary = ""
+        var tavilyAnswer = ""
 
         if (config.searchProvider == "tavily" && config.tavilyApiKey.isNotBlank()) {
+            // 三个角度并行检索，避免串行等待；单路失败不影响其余结果。
+            val responses = coroutineScope {
+                queries.map { query -> async { safeTavilySearch(config, query) } }.awaitAll()
+            }.filterNotNull()
+            results = mergeResults(responses.flatMap { it.first })
+            tavilyAnswer = responses
+                .mapNotNull { (_, answer) -> answer.takeIf { it.isNotBlank() } }
+                .joinToString("\n\n")
+                .trim()
+        }
+
+        val summary = if (results.isNotEmpty()) {
             try {
-                val tavily = tavilySearch(config, query)
-                results = tavily.first
-                summary = tavily.second
-                if (results.isNotEmpty() && summary.isBlank()) {
-                    summary = try {
-                        aiClient.chatOnce(
-                            config = config,
-                            messages = Prompts.searchSummaryMessages(query, results),
-                            temperature = 0.3,
-                            maxTokens = 800,
-                            fallbackLabel = "整理检索结果失败",
-                        )
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (_: Exception) {
-                        snippetSummary(results)
-                    }
-                }
+                val synthesized = aiClient.chatOnce(
+                    config = config,
+                    messages = Prompts.searchSummaryMessages(queries.first(), results, tavilyAnswer),
+                    temperature = 0.3,
+                    maxTokens = 1400,
+                    fallbackLabel = "整理检索结果失败",
+                ).trim()
+                synthesized.ifBlank { fallbackSummary(tavilyAnswer, results) }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                // Tavily 不可用时回退到模型知识，不中断流程。
+                fallbackSummary(tavilyAnswer, results)
             }
-        }
-
-        if (summary.isBlank()) {
+        } else {
             val reply = aiClient.chatOnce(
                 config = config,
                 messages = Prompts.searchFallbackMessages(novelName),
                 temperature = 0.3,
-                maxTokens = 800,
+                maxTokens = 1400,
                 fallbackLabel = "搜索小说信息失败",
             )
-            summary = Prompts.parseFallbackSummary(reply)
+            Prompts.parseFallbackSummary(reply)
         }
 
         return SearchData(novelName = novelName, summary = summary, results = results)
     }
+
+    private suspend fun safeTavilySearch(
+        config: AiConfig,
+        query: String,
+    ): Pair<List<SearchResult>, String>? = try {
+        tavilySearch(config, query)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
+    }
+
+    /** 多路检索结果去重、截断，优先保留 URL 唯一的条目。 */
+    private fun mergeResults(all: List<SearchResult>): List<SearchResult> {
+        val seen = HashSet<String>()
+        return all.asSequence()
+            .filter { it.title.isNotBlank() || it.snippet.isNotBlank() }
+            .map { it.copy(snippet = clipCodePoints(it.snippet, 800)) }
+            .filter { seen.add(it.url.ifBlank { it.title }) }
+            .take(MAX_MERGED_RESULTS)
+            .toList()
+    }
+
+    private fun fallbackSummary(tavilyAnswer: String, results: List<SearchResult>): String =
+        tavilyAnswer.ifBlank { snippetSummary(results) }
 
     private suspend fun tavilySearch(
         config: AiConfig,
@@ -83,7 +116,7 @@ class SearchService(
     ): Pair<List<SearchResult>, String> = withContext(Dispatchers.IO) {
         val payload = JSONObject().apply {
             put("query", query)
-            put("max_results", 10)
+            put("max_results", 8)
             put("include_answer", true)
             put("search_depth", "basic")
         }
@@ -132,12 +165,13 @@ class SearchService(
     }
 
     private fun snippetSummary(results: List<SearchResult>): String =
-        results.take(5)
+        results.take(6)
             .filter { it.snippet.isNotBlank() }
             .joinToString("\n\n") { "${it.title}：${it.snippet}" }
 
     companion object {
         private const val TAVILY_URL = "https://api.tavily.com/search"
+        private const val MAX_MERGED_RESULTS = 16
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

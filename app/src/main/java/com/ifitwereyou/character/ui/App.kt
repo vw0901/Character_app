@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ifitwereyou.character.ui.components.AppBackdrop
 import com.ifitwereyou.character.ui.screens.BibleScreen
-import com.ifitwereyou.character.ui.screens.CheckScreen
 import com.ifitwereyou.character.ui.screens.GameScreen
 import com.ifitwereyou.character.ui.screens.HomeScreen
 import com.ifitwereyou.character.ui.screens.SettingsScreen
@@ -76,11 +75,6 @@ fun CharacterApp(viewModel: AppViewModel) {
                 )
 
                 Screen.BIBLE -> BibleScreen(
-                    viewModel = viewModel,
-                    onExport = { exportLauncher.launch(viewModel.suggestedExportName()) },
-                )
-
-                Screen.CHECK -> CheckScreen(
                     viewModel = viewModel,
                     onExport = { exportLauncher.launch(viewModel.suggestedExportName()) },
                 )

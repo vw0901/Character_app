@@ -135,7 +135,6 @@ fun GameScreen(
             onOpenSettings = viewModel::openSettings,
             onHome = viewModel::goHome,
             onOpenBible = viewModel::openBible,
-            onOpenCheck = viewModel::openCheck,
         )
     } else {
         GamePlayContent(
@@ -146,7 +145,6 @@ fun GameScreen(
             onBack = { viewModel.handleBack() },
             onHome = viewModel::goHome,
             onOpenBible = viewModel::openBible,
-            onOpenCheck = viewModel::openCheck,
             onUndo = viewModel::undo,
             onExport = onExport,
             onSwitchCharacter = { viewModel.leaveBook() },
@@ -180,9 +178,8 @@ private fun CharacterSelectContent(
     onOpenSettings: () -> Unit,
     onHome: () -> Unit,
     onOpenBible: () -> Unit,
-    onOpenCheck: () -> Unit,
 ) {
-    val bible = document.repair?.bible ?: document.bible
+    val bible = document.bible
     val characters = bible?.characters.orEmpty()
     val coreKeys = characters.map { characterKey(existingChoice(it)) }.toSet()
     val shelfBooks = document.adventures.filterKeys { it !in coreKeys }
@@ -206,32 +203,27 @@ private fun CharacterSelectContent(
             OverflowMenu(
                 items = listOf(
                     MenuAction("查看设定圣经", onClick = onOpenBible),
-                    MenuAction(
-                        label = "查看体检报告",
-                        enabled = document.check != null,
-                        onClick = onOpenCheck,
-                    ),
                     MenuAction("返回书架", onClick = onHome),
                     MenuAction("AI 设置", onClick = onOpenSettings),
                 ),
             )
         },
     ) {
-        val repairCount = document.repair?.appliedFixes?.size ?: 0
-        if (repairCount > 0) {
-            Text(
-                "本次冒险使用已修补 $repairCount 处漏洞后的设定。",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted,
-            )
-            Spacer(Modifier.height(14.dp))
-        } else if (!characters.isEmpty()) {
+        if (!characters.isEmpty()) {
             Text(
                 "从小说设定中挑选一位人物，以第一人称进入属于 TA 的故事。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted,
             )
             Spacer(Modifier.height(14.dp))
+        }
+        if (!bible?.tone.isNullOrBlank()) {
+            Text(
+                "原著文风：${bible?.tone}",
+                style = MaterialTheme.typography.labelSmall,
+                color = Amber.copy(alpha = 0.8f),
+            )
+            Spacer(Modifier.height(12.dp))
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -546,7 +538,6 @@ private fun GamePlayContent(
     onBack: () -> Unit,
     onHome: () -> Unit,
     onOpenBible: () -> Unit,
-    onOpenCheck: () -> Unit,
     onUndo: () -> Unit,
     onExport: () -> Unit,
     onSwitchCharacter: () -> Unit,
@@ -588,11 +579,6 @@ private fun GamePlayContent(
                             label = "查看设定圣经",
                             enabled = document.bible != null,
                             onClick = onOpenBible,
-                        ),
-                        MenuAction(
-                            label = "查看体检报告",
-                            enabled = document.check != null,
-                            onClick = onOpenCheck,
                         ),
                         MenuAction("切换角色", enabled = !ui.busy, onClick = onSwitchCharacter),
                         MenuAction("返回书架", onClick = onHome),

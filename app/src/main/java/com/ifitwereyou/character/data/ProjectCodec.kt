@@ -16,7 +16,7 @@ import java.time.LocalDate
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-enum class ProjectPhase { SEARCH, BIBLE, CHECK, GAME }
+enum class ProjectPhase { SEARCH, BIBLE, GAME }
 
 private val SAFE_ID_REGEX = Regex("^[\\p{L}\\p{N}_-]{1,64}$")
 private val SLUG_REGEX = Regex("[^\\p{L}\\p{N}_-]+")
@@ -43,8 +43,6 @@ private fun baseProject(novelName: String): ProjectDocument {
         updatedAt = timestamp,
         search = null,
         bible = null,
-        check = null,
-        repair = null,
         adventures = emptyMap(),
         activeAdventureKey = null,
     )
@@ -59,7 +57,6 @@ fun createProjectFromBible(bible: SettingBible): ProjectDocument =
 fun phaseForProject(project: ProjectDocument): ProjectPhase {
     val hasBook = project.activeAdventureKey != null || project.adventures.isNotEmpty()
     if (project.bible != null && hasBook) return ProjectPhase.GAME
-    if (project.bible != null && (project.check != null || project.repair != null)) return ProjectPhase.CHECK
     if (project.bible != null || project.search != null) return ProjectPhase.BIBLE
     return ProjectPhase.SEARCH
 }
@@ -92,8 +89,6 @@ object ProjectCodec {
         json.put("updatedAt", document.updatedAt)
         putNullable(json, "search", document.search?.let { searchToJson(it) })
         putNullable(json, "bible", document.bible?.let { bibleToJson(it) })
-        putNullable(json, "check", document.check?.let { checkToJson(it) })
-        putNullable(json, "repair", document.repair?.let { repairToJson(it) })
         val adventures = JSONObject()
         document.adventures.forEach { (key, adventure) -> adventures.put(key, adventureToJson(adventure)) }
         json.put("adventures", adventures)
@@ -122,6 +117,8 @@ object ProjectCodec {
         put("status", bible.status)
         put("genre", bible.genre)
         put("synopsis", bible.synopsis)
+        put("tone", bible.tone)
+        put("themes", JSONArray(bible.themes))
         put("worldview", JSONObject().apply {
             put("summary", bible.worldview.summary)
             put("geography", bible.worldview.geography)
@@ -172,37 +169,42 @@ object ProjectCodec {
                 })
             }
         })
-    }
-
-    fun checkToJson(check: CheckResult): JSONObject = JSONObject().apply {
-        put("overallScore", check.overallScore)
-        put("summary", check.summary)
-        put("issues", JSONArray().apply {
-            check.issues.forEach { issue ->
+        put("locations", JSONArray().apply {
+            bible.locations.forEach { location ->
                 put(JSONObject().apply {
-                    put("category", issue.category)
-                    put("severity", issue.severity)
-                    put("title", issue.title)
-                    put("description", issue.description)
-                    put("fix", issue.fix)
+                    put("name", location.name)
+                    put("description", location.description)
+                    put("significance", location.significance)
                 })
             }
         })
-        put("strengths", JSONArray(check.strengths))
-    }
-
-    fun repairToJson(repair: RepairResult): JSONObject = JSONObject().apply {
-        put("summary", repair.summary)
-        put("appliedFixes", JSONArray().apply {
-            repair.appliedFixes.forEach { fix ->
+        put("keyItems", JSONArray().apply {
+            bible.keyItems.forEach { item ->
                 put(JSONObject().apply {
-                    put("issue", fix.issue)
-                    put("action", fix.action)
-                    put("field", fix.field)
+                    put("name", item.name)
+                    put("description", item.description)
+                    put("significance", item.significance)
                 })
             }
         })
-        put("bible", bibleToJson(repair.bible))
+        put("iconicScenes", JSONArray().apply {
+            bible.iconicScenes.forEach { scene ->
+                put(JSONObject().apply {
+                    put("title", scene.title)
+                    put("description", scene.description)
+                    put("impact", scene.impact)
+                })
+            }
+        })
+        put("quotes", JSONArray().apply {
+            bible.quotes.forEach { quote ->
+                put(JSONObject().apply {
+                    put("text", quote.text)
+                    put("speaker", quote.speaker)
+                    put("context", quote.context)
+                })
+            }
+        })
     }
 
     fun statsToJson(stats: StatValues): JSONObject = JSONObject().apply {
@@ -374,6 +376,55 @@ fun normalizeBible(value: Any?, fallbackName: String = ""): SettingBible? {
             )
         }
     }
+    val locations = (record.optArray("locations") ?: JSONArray()).let { array ->
+        (0 until array.length()).mapNotNull { index ->
+            val row = asRecord(array.opt(index)) ?: return@mapNotNull null
+            val name = text(row.opt("name"))
+            if (name.isBlank()) return@mapNotNull null
+            KeyLocation(
+                name = name,
+                description = text(row.opt("description")),
+                significance = text(row.opt("significance")),
+            )
+        }
+    }
+    val keyItems = (record.optArray("keyItems", "key_items") ?: JSONArray()).let { array ->
+        (0 until array.length()).mapNotNull { index ->
+            val row = asRecord(array.opt(index)) ?: return@mapNotNull null
+            val name = text(row.opt("name"))
+            if (name.isBlank()) return@mapNotNull null
+            KeyItem(
+                name = name,
+                description = text(row.opt("description")),
+                significance = text(row.opt("significance")),
+            )
+        }
+    }
+    val iconicScenes = (record.optArray("iconicScenes", "iconic_scenes") ?: JSONArray()).let { array ->
+        (0 until array.length()).mapNotNull { index ->
+            val row = asRecord(array.opt(index)) ?: return@mapNotNull null
+            val title = text(row.opt("title")).ifBlank { text(row.opt("event")) }
+            val description = text(row.opt("description"))
+            if (title.isBlank() && description.isBlank()) return@mapNotNull null
+            IconicScene(
+                title = title.ifBlank { "名场面" },
+                description = description,
+                impact = text(row.opt("impact"), text(row.opt("meaning"))),
+            )
+        }
+    }
+    val quotes = (record.optArray("quotes", "classicQuotes", "classic_quotes") ?: JSONArray()).let { array ->
+        (0 until array.length()).mapNotNull { index ->
+            val row = asRecord(array.opt(index)) ?: return@mapNotNull null
+            val content = text(row.opt("text")).ifBlank { text(row.opt("quote")) }
+            if (content.isBlank()) return@mapNotNull null
+            ClassicQuote(
+                text = content,
+                speaker = text(row.opt("speaker")),
+                context = text(row.opt("context")),
+            )
+        }
+    }
 
     val bible = SettingBible(
         novelName = text(record.opt("novelName"), fallbackName),
@@ -381,6 +432,8 @@ fun normalizeBible(value: Any?, fallbackName: String = ""): SettingBible? {
         status = text(record.opt("status")),
         genre = text(record.opt("genre")),
         synopsis = text(record.opt("synopsis")),
+        tone = text(record.opt("tone")),
+        themes = stringList(record.opt("themes")),
         worldview = Worldview(
             summary = text(worldview.opt("summary")),
             geography = text(worldview.opt("geography")),
@@ -397,6 +450,10 @@ fun normalizeBible(value: Any?, fallbackName: String = ""): SettingBible? {
         characters = characters,
         timeline = timeline,
         mysteries = mysteries,
+        locations = locations,
+        keyItems = keyItems,
+        iconicScenes = iconicScenes,
+        quotes = quotes,
     )
 
     val recognizable = bible.novelName.isNotBlank() ||
@@ -404,52 +461,14 @@ fun normalizeBible(value: Any?, fallbackName: String = ""): SettingBible? {
         characters.isNotEmpty() ||
         timeline.isNotEmpty() ||
         mysteries.isNotEmpty() ||
+        locations.isNotEmpty() ||
+        keyItems.isNotEmpty() ||
+        iconicScenes.isNotEmpty() ||
+        quotes.isNotEmpty() ||
+        bible.tone.isNotBlank() ||
         bible.worldview.summary.isNotBlank() ||
         bible.synopsis.isNotBlank()
     return bible.takeIf { recognizable }
-}
-
-fun normalizeCheck(value: Any?): CheckResult? {
-    val record = asRecord(value) ?: return null
-    val issues = (record.optArray("issues") ?: JSONArray()).let { array ->
-        (0 until array.length()).mapNotNull { index ->
-            val row = asRecord(array.opt(index)) ?: return@mapNotNull null
-            val issue = CheckIssue(
-                category = text(row.opt("category")),
-                severity = text(row.opt("severity")),
-                title = text(row.opt("title")),
-                description = text(row.opt("description")),
-                fix = text(row.opt("fix")),
-            )
-            issue.takeIf { it.title.isNotBlank() || it.description.isNotBlank() }
-        }
-    }
-    val summary = text(record.opt("summary"))
-    val hasScore = record.has("overallScore") || record.has("overall_score")
-    if (summary.isBlank() && issues.isEmpty() && !hasScore) return null
-
-    val scoreValue = if (record.has("overallScore")) record.opt("overallScore") else record.opt("overall_score")
-    return CheckResult(
-        overallScore = clamp(numberValue(scoreValue).roundToInt(), 0, 100),
-        summary = summary,
-        issues = issues,
-        strengths = stringList(record.opt("strengths")),
-    )
-}
-
-fun normalizeRepair(value: Any?): RepairResult? {
-    val record = asRecord(value) ?: return null
-    val bible = normalizeBible(record.opt("bible")) ?: return null
-    val fixes = (record.optArray("appliedFixes", "applied_fixes") ?: JSONArray()).let { array ->
-        (0 until array.length()).mapNotNull { index ->
-            val row = asRecord(array.opt(index)) ?: return@mapNotNull null
-            val issue = text(row.opt("issue")).ifBlank { text(row.opt("title")) }
-            val action = text(row.opt("action")).ifBlank { text(row.opt("fix")) }
-            if (issue.isBlank() && action.isBlank()) return@mapNotNull null
-            RepairFix(issue = issue, action = action, field = text(row.opt("field")))
-        }
-    }
-    return RepairResult(summary = text(record.opt("summary")), appliedFixes = fixes, bible = bible)
 }
 
 private fun normalizeStats(value: Any?): StatValues {
@@ -741,11 +760,9 @@ fun normalizeProject(value: Any?): ProjectDocument? {
 
     val search = normalizeSearchData(record.opt("search"))
     val bible = normalizeBible(record.opt("bible"))
-    val check = normalizeCheck(record.opt("check"))
-    val repair = normalizeRepair(record.opt("repair"))
     val (adventures, legacyActiveKey) = normalizeAdventures(record)
 
-    if (search == null && bible == null && check == null && repair == null && adventures.isEmpty()) {
+    if (search == null && bible == null && adventures.isEmpty()) {
         return null
     }
 
@@ -765,8 +782,6 @@ fun normalizeProject(value: Any?): ProjectDocument? {
         appVersion = text(record.opt("appVersion")).ifBlank { APP_VERSION },
         search = search,
         bible = bible,
-        check = check,
-        repair = repair,
         adventures = adventures,
         activeAdventureKey = storedActive.takeIf { adventures.containsKey(it) } ?: legacyActiveKey,
     )
@@ -788,7 +803,8 @@ fun parseImportedJson(raw: String): ImportedProject {
 
     val bibleFields = listOf(
         "worldview", "powerSystem", "power_system", "factions",
-        "characters", "timeline", "mysteries",
+        "characters", "timeline", "mysteries", "locations",
+        "keyItems", "key_items", "iconicScenes", "iconic_scenes", "quotes",
     )
     val looksLikeBible = bibleFields.any { record.has(it) }
     val looksLikeSearch = record.has("results") || (!looksLikeBible && record.has("summary"))

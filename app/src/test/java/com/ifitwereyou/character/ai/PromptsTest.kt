@@ -3,7 +3,11 @@ package com.ifitwereyou.character.ai
 import com.ifitwereyou.character.data.BibleCharacter
 import com.ifitwereyou.character.data.CharacterChoice
 import com.ifitwereyou.character.data.CharacterMode
+import com.ifitwereyou.character.data.ClassicQuote
 import com.ifitwereyou.character.data.GameState
+import com.ifitwereyou.character.data.IconicScene
+import com.ifitwereyou.character.data.KeyItem
+import com.ifitwereyou.character.data.KeyLocation
 import com.ifitwereyou.character.data.HistoryEntry
 import com.ifitwereyou.character.data.HistoryType
 import com.ifitwereyou.character.data.PlayerCharacter
@@ -137,6 +141,25 @@ class PromptsTest {
         assertEquals("古桥体系", digest.getJSONObject("powerSystem").optString("name"))
         assertEquals("守桥人", digest.getJSONArray("factions").getJSONObject(0).optString("name"))
         assertEquals("桥下有什么？", digest.getJSONArray("mysteries").getString(0))
+    }
+
+    @Test
+    fun digestCarriesOriginalFlavor() {
+        val flavorful = bible.copy(
+            tone = "冷峻克制，短句",
+            themes = listOf("孤独", "守望"),
+            locations = listOf(KeyLocation("古桥", "横跨雾江", "守桥人世代驻守")),
+            keyItems = listOf(KeyItem("断剑", "剑身有缺口", "林澈父亲留下的信物")),
+            iconicScenes = listOf(IconicScene("雨夜过桥", "林澈第一次看见守桥人", "全书基调")),
+            quotes = listOf(ClassicQuote("不要回头。", "守桥人", "送别时")),
+        )
+        val digest = Prompts.bibleDigest(flavorful)
+        assertEquals("冷峻克制，短句", digest.optString("tone"))
+        assertEquals("孤独", digest.getJSONArray("themes").getString(0))
+        assertEquals("古桥", digest.getJSONArray("locations").getJSONObject(0).optString("name"))
+        assertEquals("断剑", digest.getJSONArray("keyItems").getJSONObject(0).optString("name"))
+        assertEquals("雨夜过桥", digest.getJSONArray("iconicScenes").getJSONObject(0).optString("title"))
+        assertEquals("不要回头。", digest.getJSONArray("quotes").getJSONObject(0).optString("text"))
     }
 
     @Test

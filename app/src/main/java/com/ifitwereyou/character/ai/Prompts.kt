@@ -1,8 +1,6 @@
 package com.ifitwereyou.character.ai
 
 import com.ifitwereyou.character.data.CharacterChoice
-import com.ifitwereyou.character.data.CheckIssue
-import com.ifitwereyou.character.data.CheckResult
 import com.ifitwereyou.character.data.GameState
 import com.ifitwereyou.character.data.HistoryEntry
 import com.ifitwereyou.character.data.HistoryType
@@ -28,29 +26,49 @@ object Prompts {
     // 检索
     // ------------------------------------------------------------------
 
-    private const val SUMMARY_SYSTEM_PROMPT = """你是一位严谨的小说资料整理助手。请仅依据提供的检索结果，整理小说作者、完结状态、类型、世界观设定、主要人物等已知信息。
-不要编造检索结果中不存在的事实，不确定的信息请明确标注为“未确认”。
-输出 2-4 段简洁的中文摘要，不要输出 JSON，不要输出 markdown 标题。"""
+    private const val SUMMARY_SYSTEM_PROMPT = """你是一位严谨的小说考据助手。请仅依据提供的检索结果（可参考 Tavily 的 answer），整理一部小说的「考据资料包」。
 
-    private const val FALLBACK_SYSTEM_PROMPT = """你是一位博学的小说资料助手。用户没有提供联网检索结果，请基于你的已有知识介绍这部小说。
+需要覆盖：
+1. 基本盘：作者、连载/完结、类型、篇幅、出版或连载时间
+2. 世界观：时代/地域、世界运行规则、力量体系与等级
+3. 人物：主要人物、身份关系、性格与能力
+4. 故事：核心冲突、主线脉络、结局（可剧透）
+5. 原著味道：叙事文风、名场面、经典台词（尽量保留原句，标注说话人）
+
+要求：
+- 事实优先，按检索结果写；信息不确定时标注「未确认」，不要编造
+- 名场面与台词宁可少写，也不要写成通用网文模板
+- 输出 600-900 字的中文资料，不要输出 JSON，不要 markdown 标题"""
+
+    private const val FALLBACK_SYSTEM_PROMPT = """你是一位读过大量小说的考据助手。用户没有提供联网检索结果，请基于你的已有知识介绍这部小说。
 请严格输出以下 JSON，不要输出 markdown 代码块或额外文字：
 {
-  "summary": "关于作者、完结状态、类型、世界观、主要人物和核心设定的中文摘要；不确定的信息明确标注为“未确认”"
+  "summary": "600-900 字中文资料：作者、完结状态、类型、世界观、力量体系、主要人物关系、核心冲突、结局、叙事文风、名场面与经典台词。不确定的信息明确标注为「未确认」"
 }"""
 
-    fun searchSummaryMessages(query: String, results: List<SearchResult>): List<ChatMessage> {
-        val snippets = results.take(10).mapIndexed { index, item ->
-            "${index + 1}. ${item.title}\nURL: ${item.url}\n${item.snippet}"
+    fun searchSummaryMessages(
+        query: String,
+        results: List<SearchResult>,
+        tavilyAnswer: String = "",
+    ): List<ChatMessage> {
+        val snippets = results.take(12).mapIndexed { index, item ->
+            val snippet = clipCodePoints(item.snippet, 700)
+            "${index + 1}. ${item.title}\nURL: ${item.url}\n$snippet"
         }.joinToString("\n\n")
+        val answer = tavilyAnswer.trim().let { if (it.isEmpty()) "无" else clipCodePoints(it, 1200) }
         return listOf(
             ChatMessage("system", SUMMARY_SYSTEM_PROMPT),
-            ChatMessage("user", "检索词：$query\n\n检索结果：\n$snippets"),
+            ChatMessage("user", "检索词：$query\n\nTavily 摘要：\n$answer\n\n检索结果：\n$snippets"),
         )
     }
 
     fun searchFallbackMessages(novelName: String): List<ChatMessage> = listOf(
         ChatMessage("system", FALLBACK_SYSTEM_PROMPT),
-        ChatMessage("user", "请介绍小说《$novelName》的作者、完结状态、类型、世界观设定和主要人物。"),
+        ChatMessage(
+            "user",
+            "请介绍小说《$novelName》：作者、完结状态、类型、世界观、力量体系、" +
+                "主要人物关系、核心冲突、结局方向、叙事文风、名场面和经典台词。",
+        ),
     )
 
     fun parseFallbackSummary(raw: String): String {
@@ -69,8 +87,8 @@ object Prompts {
     // 设定圣经
     // ------------------------------------------------------------------
 
-    private const val BIBLE_SYSTEM_PROMPT = """你是一位专业的小说解析师，擅长从小说中提取结构化的「设定圣经」。
-你将根据用户提供的小说名称和搜索结果，生成一份完整的设定圣经。
+    private const val BIBLE_SYSTEM_PROMPT = """你是一位资深的小说考据师与世界观编辑。请为一部小说提取一份「忠于原著、可以直接支撑文字冒险」的设定圣经。
+你会收到小说名、检索摘要与检索结果；请优先使用其中出现的事实、称谓与原文。
 
 请严格按以下 JSON 格式输出（不要输出 markdown 代码块标记，直接输出 JSON）：
 {
@@ -78,23 +96,25 @@ object Prompts {
   "author": "作者",
   "status": "完结/连载",
   "genre": "类型",
-  "synopsis": "简短概述",
+  "tone": "叙事文风与语言气质（20-50字，如：冷峻克制的硬科幻，短句、少形容词）",
+  "themes": ["主题词1", "主题词2", "主题词3"],
+  "synopsis": "200字以内、包含核心冲突与结局方向的概述",
   "worldview": {
     "summary": "世界观总述",
-    "geography": "地理环境",
-    "history": "历史背景",
-    "rules": "世界运行规则"
+    "geography": "地理环境与重要区域",
+    "history": "历史背景与关键纪元",
+    "rules": "世界运行规则（什么能做、什么绝对不能做）"
   },
   "powerSystem": {
-    "name": "体系名称",
-    "levels": ["等级1", "等级2"],
+    "name": "体系名称（用原著叫法）",
+    "levels": ["等级1", "等级2", "等级3"],
     "description": "体系说明",
-    "limitations": "限制条件"
+    "limitations": "限制、代价与禁忌"
   },
   "factions": [
     {
-      "name": "势力名",
-      "description": "描述",
+      "name": "势力名（用原著叫法）",
+      "description": "立场、行事风格与现状",
       "keyMembers": ["成员"],
       "goal": "目标"
     }
@@ -102,199 +122,78 @@ object Prompts {
   "characters": [
     {
       "name": "角色名",
-      "role": "角色定位",
-      "abilities": "能力",
-      "personality": "性格",
-      "relationships": "关系网"
+      "role": "身份与在故事中的位置",
+      "abilities": "能力、武器或专长",
+      "personality": "性格与说话方式",
+      "relationships": "与关键人物的关系"
     }
   ],
   "timeline": [
     {
-      "event": "事件",
-      "description": "描述"
+      "event": "事件名",
+      "description": "前因后果"
     }
   ],
   "mysteries": [
     {
       "question": "未解之谜",
-      "clues": "线索",
-      "theories": "猜测"
+      "clues": "原著给出的线索",
+      "theories": "主流猜测"
+    }
+  ],
+  "locations": [
+    {
+      "name": "重要地点（原著地名）",
+      "description": "环境与氛围",
+      "significance": "为什么重要、发生过什么"
+    }
+  ],
+  "keyItems": [
+    {
+      "name": "关键物品/道具/功法/武器",
+      "description": "外观与用途",
+      "significance": "在故事中的作用"
+    }
+  ],
+  "iconicScenes": [
+    {
+      "title": "名场面标题",
+      "description": "谁、在哪里、发生了什么",
+      "impact": "为什么被读者记住"
+    }
+  ],
+  "quotes": [
+    {
+      "text": "经典台词，尽量保留原文",
+      "speaker": "说话人",
+      "context": "在什么情境下说出"
     }
   ]
 }
 
 要求：
-1. 如果搜索结果中信息不足，可以基于小说类型和已知信息进行合理推演，但要标注“推演”
-2. 每个部分都要有实质内容，不要留空
-3. 人物至少5个，势力至少3个，时间线至少5个事件，未解之谜至少3个
-4. 直接输出 JSON，不要包含任何其他文字"""
+1. 忠于原著：人名、地名、组织名、境界名、招式名、台词尽量沿用原著表述，不要用通用奇幻/科幻模板替换
+2. 完整度：人物至少 6 个，势力至少 3 个，时间线至少 6 个事件，未解之谜至少 3 个，地点至少 4 个，关键物品至少 3 个，名场面至少 4 个，台词至少 4 句
+3. tone 必须具体到语言气质与叙事节奏；themes 取 3-6 个真正的主题词，不要写「冒险」「成长」这类空话
+4. 名场面与台词必须来自这部小说或高度可信的检索资料；句子记不全时可以写「（大意）」，不要把通用台词硬塞进来
+5. 资料不足时可以基于世界观合理推演，但要在对应文字末尾标注「（推演）」；不要整段留空
+6. synopsis 可以剧透，但不要把结局写成一句话；为后续冒险留出可玩的空间
+7. 直接输出 JSON，不要包含任何其他文字"""
 
     fun bibleMessages(
         novelName: String,
         searchResults: List<SearchResult>,
         searchSummary: String,
     ): List<ChatMessage> {
-        val results = searchResults.take(5).mapIndexed { index, result ->
-            "${index + 1}. ${result.title}\n   ${result.snippet}"
+        val results = searchResults.take(12).mapIndexed { index, result ->
+            val snippet = clipCodePoints(result.snippet, 500)
+            "${index + 1}. ${result.title}（${result.siteName.ifBlank { result.url }}）\n   $snippet"
         }.joinToString("\n\n")
         val userContent = "小说名: $novelName\n" +
-            "搜索摘要: ${searchSummary.ifBlank { "无" }}\n" +
-            "搜索结果:\n$results"
+            "检索摘要:\n${clipCodePoints(searchSummary.ifBlank { "无" }, 2000)}\n\n" +
+            "检索结果:\n$results"
         return listOf(
             ChatMessage("system", BIBLE_SYSTEM_PROMPT),
-            ChatMessage("user", userContent),
-        )
-    }
-
-    // ------------------------------------------------------------------
-    // 漏洞体检
-    // ------------------------------------------------------------------
-
-    private const val CHECK_SYSTEM_PROMPT = """你是一位严谨的小说设定审计师，专门对小说的「设定圣经」进行漏洞体检。
-
-你需要从以下维度审查设定的一致性和合理性：
-1. **世界观漏洞**: 世界规则是否自相矛盾？地理/历史是否存在逻辑断层？
-2. **力量体系漏洞**: 等级设定是否合理？是否存在无法解释的强度崩坏？限制条件是否被滥用？
-3. **势力平衡漏洞**: 各势力之间是否存在不合理的强度差？势力动态是否缺乏动力？
-4. **人物漏洞**: 角色能力是否与其定位匹配？人物关系是否存在矛盾？是否缺少关键角色？
-5. **时间线漏洞**: 事件顺序是否合理？是否存在时间线冲突？
-6. **未解之谜**: 线索是否充分？是否存在互相矛盾的猜测？
-
-请严格按以下 JSON 格式输出（不要输出 markdown 代码块标记，直接输出 JSON）：
-{
-  "overallScore": 75,
-  "summary": "总体评价",
-  "issues": [
-    {
-      "category": "世界观/力量体系/势力平衡/人物/时间线/未解之谜",
-      "severity": "高/中/低",
-      "title": "漏洞标题",
-      "description": "详细描述",
-      "fix": "修补方案"
-    }
-  ],
-  "strengths": ["优点1", "优点2"]
-}
-
-要求：
-1. 至少找出5个漏洞，至少2个优点
-2. 每个漏洞都要给出具体可采纳的修补方案
-3. 漏洞必须来自圣经里真实存在的内容，不要虚构圣经中没有的设定来凑数
-4. 评分范围 0-100
-5. 直接输出 JSON，不要包含任何其他文字"""
-
-    fun checkMessages(bible: SettingBible): List<ChatMessage> {
-        val bibleJson = ProjectCodec.bibleToJson(bible).toString()
-        return listOf(
-            ChatMessage("system", CHECK_SYSTEM_PROMPT),
-            ChatMessage("user", "请对以下设定圣经进行漏洞体检：\n\n$bibleJson"),
-        )
-    }
-
-    // ------------------------------------------------------------------
-    // 设定修补
-    // ------------------------------------------------------------------
-
-    private const val REPAIR_SYSTEM_PROMPT = """你是一位资深的小说设定修补师。你会收到一份「设定圣经」和一份「漏洞体检报告」，
-请按照报告中的每条修补方案，直接改写、补全设定圣经，让它自洽完整，可以直接支撑后续的文字冒险。
-
-请严格按以下 JSON 格式输出（不要输出 markdown 代码块标记，直接输出 JSON）：
-{
-  "summary": "本次修补的整体说明（100 字以内）",
-  "appliedFixes": [
-    {
-      "issue": "对应的漏洞标题",
-      "action": "你具体改了什么",
-      "field": "worldview / powerSystem / factions / characters / timeline / mysteries"
-    }
-  ],
-  "bible": {
-    "novelName": "小说名",
-    "author": "作者",
-    "status": "完结/连载",
-    "genre": "类型",
-    "synopsis": "简短概述",
-    "worldview": {
-      "summary": "世界观总述",
-      "geography": "地理环境",
-      "history": "历史背景",
-      "rules": "世界运行规则"
-    },
-    "powerSystem": {
-      "name": "体系名称",
-      "levels": ["等级1", "等级2"],
-      "description": "体系说明",
-      "limitations": "限制条件"
-    },
-    "factions": [
-      {
-        "name": "势力名",
-        "description": "描述",
-        "keyMembers": ["成员"],
-        "goal": "目标"
-      }
-    ],
-    "characters": [
-      {
-        "name": "角色名",
-        "role": "角色定位",
-        "abilities": "能力",
-        "personality": "性格",
-        "relationships": "关系网"
-      }
-    ],
-    "timeline": [
-      {
-        "event": "事件",
-        "description": "描述"
-      }
-    ],
-    "mysteries": [
-      {
-        "question": "未解之谜",
-        "clues": "线索",
-        "theories": "猜测"
-      }
-    ]
-  }
-}
-
-要求：
-1. bible 必须是完整结构，worldview、powerSystem、factions、characters、timeline、mysteries 一个都不能少
-2. 保留原设定中未被指出问题的内容，不要删减已有的人物、势力、时间线与未解之谜
-3. 体检报告中「高」「中」级别的漏洞都必须被修补，并且修补结果要体现在 bible 里
-4. 修补后人物不少于 5 个、势力不少于 3 个、时间线不少于 5 个事件、未解之谜不少于 3 个
-5. appliedFixes 与漏洞一一对应，最多 10 条；如果报告里没有漏洞，就补全缺失的部分并在 summary 中说明
-6. 修补后的设定仍必须属于这部小说：不要用通用奇幻/科幻模板替换原有世界观
-7. 直接输出 JSON，不要包含任何其他文字"""
-
-    private fun compactIssues(check: CheckResult?): List<CheckIssue> =
-        check?.issues?.take(10) ?: emptyList()
-
-    fun repairMessages(bible: SettingBible, check: CheckResult?): List<ChatMessage> {
-        val bibleJson = ProjectCodec.bibleToJson(bible).toString()
-
-        val report = JSONObject().apply {
-            put("overallScore", check?.overallScore ?: JSONObject.NULL)
-            put("summary", check?.summary.orEmpty())
-            put("issues", JSONArray().apply {
-                compactIssues(check).forEach { issue ->
-                    put(JSONObject().apply {
-                        put("category", issue.category)
-                        put("severity", issue.severity)
-                        put("title", issue.title)
-                        put("description", issue.description)
-                        put("fix", issue.fix)
-                    })
-                }
-            })
-        }
-        val reportJson = report.toString()
-        val userContent = "设定圣经：\n$bibleJson\n\n" +
-            "漏洞体检报告：\n$reportJson\n\n" +
-            "请按体检报告逐条修补，输出完整的修补后设定圣经。"
-        return listOf(
-            ChatMessage("system", REPAIR_SYSTEM_PROMPT),
             ChatMessage("user", userContent),
         )
     }
@@ -362,7 +261,9 @@ object Prompts {
 6. finalGoal 必须是这个角色在 totalDays 天内、靠本次冒险中的若干次行动就能完成的事；不要设置需要多年修炼、时间跳跃，或依赖玩家不可能拿到的资源与地点的目标
 7. timeline 是本局故事的倒计时：label 说明时间压力来自什么事件，totalDays 取 15-30 的整数，currentDay 固定为 1
 8. playerCharacter.initialStats 三项都是 0-100 的整数：health 取 60-100，power 与 reputation 取 20-80；不要让角色一开局就濒死
-9. 直接输出 JSON，不要包含任何其他文字"""
+9. 必须写出「这部小说」的味道：沿用 tone 的语言气质、人物称呼、地名、组织名与招式名；在合适的地方化用 quotes 与 iconicScenes，但不要生硬复读或把台词塞满
+10. 这是该小说的同人冒险，不是通用玄幻/都市爽文：不要出现与世界观无关的现代梗、系统面板或通用打脸桥段
+11. 直接输出 JSON，不要包含任何其他文字"""
 
     fun gameMessages(bible: SettingBible, character: CharacterChoice?): List<ChatMessage> {
         val characterContext = if (character != null) {
@@ -446,7 +347,8 @@ object Prompts {
 9. 如果本次 statsChange 会让生命值降到 0 或以下，isEnding=true、endingType="failure"，并写出失败结局；生命归零由前端最终裁定
 10. 时间线耗尽也由前端裁定失败，你不要因为剩余天数少就提前结束故事；但当剩余天数 ≤ 3 时，选项必须提供一条能直接冲向最终目标的路径
 11. 如果这次是玩家自己写下的行动（ID 以 custom 开头），必须让它真的发生：能做成就写过程与代价，做不到就写受阻、失败或引出新的麻烦；既不能无视它，也不能替玩家追加他没有写过的举动
-12. 除第 8、9 条的情况外，isEnding 必须为 false；直接输出 JSON，不要包含任何其他文字"""
+12. 保持原著的叙事语气与用词习惯（见设定摘要的 tone / quotes / iconicScenes）：人物说话方式、地名、组织名、招式名不要漂移；可以化用经典台词，但每轮最多一处，且要贴合情境
+13. 除第 8、9 条的情况外，isEnding 必须为 false；直接输出 JSON，不要包含任何其他文字"""
 
     fun gameActionMessages(
         bible: SettingBible,
@@ -584,6 +486,7 @@ confidence 取 high / medium / low。"""
 3. 可以补充动作的方式、姿态或感官细节，但不要写出结果，也不要替玩家决定成败
 4. 不要出现「我选择」「玩家」「行动：」这类说明性文字，不要加引号、序号或 markdown
 5. 只输出润色后的这一句：不解释、不反问、不提供选项
+6. 保持这部小说的叙事文风与用词习惯（tone），不要把它改写成通用网文腔
 
 玩家的表达已经通顺时，在保持原意的前提下略作提炼即可，不要为了改而改。"""
 
@@ -614,6 +517,8 @@ confidence 取 high / medium / low。"""
         val genre = clipCodePoints(bible.genre, 40)
         val sections = mutableListOf<String>()
         if (novel.isNotEmpty()) sections.add("【作品】\n$novel" + if (genre.isNotEmpty()) "（$genre）" else "")
+        val tone = clipCodePoints(bible.tone, 120)
+        if (tone.isNotEmpty()) sections.add("【原著文风】\n$tone")
 
         val context = listOfNotNull(
             formatScene(scene, descriptionLimit = 200),
@@ -644,10 +549,11 @@ confidence 取 high / medium / low。"""
 后日谈写的是「结局之后」：
 1. 用 3-5 段中文，总共 500-800 字：先回望这段路上真正改变了什么，再写此后人们怎样活下去。
 2. 成功结局写目标达成后的余波：代价、失去的东西、被救下的人；失败结局写未竟之事怎样留在世界里，以及角色最后停在哪里。不要改写已经发生的结局，也不要给玩家一次翻盘的机会。
-3. 沿用第二人称「你」，与正文保持同一种语气和世界观；不要引入设定之外的新角色、新势力或新能力。
+3. 沿用第二人称「你」，保持原著 tone 的语言气质与用词习惯；不要引入设定之外的新角色、新势力或新能力。
 4. 交代主要人物与关键线索的下落，让读者感到这个故事真的收尾了。
-5. 可以留一点余韵，但不要抛出新的选择、任务或「下一章」式的悬念。
-6. 直接输出后日谈正文：不要标题、不要 markdown 标记、不要解释你写了什么。"""
+5. 可以回扣一次经典台词或名场面作为余韵，但不要照抄整段，也不要为了煽情硬塞。
+6. 可以留一点余韵，但不要抛出新的选择、任务或「下一章」式的悬念。
+7. 直接输出后日谈正文：不要标题、不要 markdown 标记、不要解释你写了什么。"""
 
     fun epilogueMessages(
         bible: SettingBible,
@@ -662,6 +568,10 @@ confidence 取 high / medium / low。"""
         val novel = clipCodePoints(bible.novelName, 120)
         val sections = mutableListOf<String>()
         if (novel.isNotEmpty()) sections.add("【作品】\n$novel")
+        val tone = clipCodePoints(bible.tone, 120)
+        if (tone.isNotEmpty()) sections.add("【原著文风】\n$tone")
+        val themes = bible.themes.take(6).joinToString("、")
+        if (themes.isNotBlank()) sections.add("【主题】\n$themes")
 
         val storyContext = listOfNotNull(
             formatCharacter(character),
@@ -752,6 +662,9 @@ confidence 取 high / medium / low。"""
         val digest = JSONObject()
         digest.put("novelName", clipCodePoints(bible.novelName, 80))
         digest.put("genre", clipCodePoints(bible.genre, 40))
+        digest.put("tone", clipCodePoints(bible.tone, 140))
+        val themes = bible.themes.take(6).map { it.trim() }.filter { it.isNotEmpty() }
+        if (themes.isNotEmpty()) digest.put("themes", JSONArray(themes))
         digest.put("synopsis", clipCodePoints(bible.synopsis, 300))
         digest.put(
             "worldview",
@@ -793,6 +706,42 @@ confidence 取 high / medium / low。"""
             if (mystery.question.isNotBlank()) mysteries.put(clipCodePoints(mystery.question, 120))
         }
         if (mysteries.length() > 0) digest.put("mysteries", mysteries)
+
+        val locations = JSONArray()
+        bible.locations.take(5).forEach { location ->
+            locations.put(JSONObject().apply {
+                put("name", clipCodePoints(location.name, 40))
+                put("significance", clipCodePoints(location.significance, 100))
+            })
+        }
+        if (locations.length() > 0) digest.put("locations", locations)
+
+        val items = JSONArray()
+        bible.keyItems.take(5).forEach { item ->
+            items.put(JSONObject().apply {
+                put("name", clipCodePoints(item.name, 40))
+                put("significance", clipCodePoints(item.significance, 100))
+            })
+        }
+        if (items.length() > 0) digest.put("keyItems", items)
+
+        val scenes = JSONArray()
+        bible.iconicScenes.take(4).forEach { scene ->
+            scenes.put(JSONObject().apply {
+                put("title", clipCodePoints(scene.title, 50))
+                put("description", clipCodePoints(scene.description, 140))
+            })
+        }
+        if (scenes.length() > 0) digest.put("iconicScenes", scenes)
+
+        val quotes = JSONArray()
+        bible.quotes.take(4).forEach { quote ->
+            quotes.put(JSONObject().apply {
+                put("text", clipCodePoints(quote.text, 100))
+                put("speaker", clipCodePoints(quote.speaker, 30))
+            })
+        }
+        if (quotes.length() > 0) digest.put("quotes", quotes)
         return digest
     }
 }

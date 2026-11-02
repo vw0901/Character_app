@@ -36,10 +36,8 @@ import com.ifitwereyou.character.data.SettingBible
 import com.ifitwereyou.character.data.phaseForProject
 import com.ifitwereyou.character.data.createProjectFromSearch
 import com.ifitwereyou.character.data.normalizeBible
-import com.ifitwereyou.character.data.normalizeCheck
 import com.ifitwereyou.character.data.normalizeGameOpening
 import com.ifitwereyou.character.data.normalizeGoalCheck
-import com.ifitwereyou.character.data.normalizeRepair
 import com.ifitwereyou.character.data.normalizeSceneResult
 import com.ifitwereyou.character.data.nowIso
 import com.ifitwereyou.character.data.parseImportedJson
@@ -95,9 +93,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _bibleState = MutableStateFlow(BibleUiState())
     val bibleState = _bibleState.asStateFlow()
 
-    private val _checkState = MutableStateFlow(CheckUiState())
-    val checkState = _checkState.asStateFlow()
-
     private val _gameState = MutableStateFlow(GameUiState())
     val gameState = _gameState.asStateFlow()
 
@@ -111,8 +106,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val saveMutex = Mutex()
 
     private var bibleJob: Job? = null
-    private var checkJob: Job? = null
-    private var repairJob: Job? = null
 
     private var openingJob: Job? = null
     private var actionJob: Job? = null
@@ -122,7 +115,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var polishJob: Job? = null
 
     private var openingKey: String? = null
-    private var loadedCheckKey: String? = null
+    private var loadedVerifyKey: String? = null
     private var epilogueAutoKey: String? = null
     private var epilogueRequestId = 0
     private var actionRunning = false
@@ -261,7 +254,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _saveState.value = if (saveImmediately) SaveState.SAVING else SaveState.IDLE
         _screen.value = when (phaseForProject(document)) {
             ProjectPhase.SEARCH, ProjectPhase.BIBLE -> Screen.BIBLE
-            ProjectPhase.CHECK -> Screen.CHECK
             ProjectPhase.GAME -> Screen.GAME
         }
         if (saveImmediately) scheduleSave()
@@ -272,10 +264,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ProjectPhase.SEARCH, ProjectPhase.BIBLE -> {
                 _screen.value = Screen.BIBLE
                 if (document.bible == null) startBibleGeneration(force = true)
-            }
-            ProjectPhase.CHECK -> {
-                _screen.value = Screen.CHECK
-                ensureCheckAndRepair()
             }
             ProjectPhase.GAME -> {
                 _screen.value = Screen.GAME
@@ -318,7 +306,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 true
             }
-            Screen.BIBLE, Screen.CHECK -> {
+            Screen.BIBLE -> {
                 goHome()
                 true
             }
@@ -486,7 +474,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (!force && bibleJob?.isActive == true) return
         val project = _project.value ?: return
         if (project.bible != null) return
-        if (project.id != _project.value?.id) return
 
         if (force) bibleJob?.cancel()
         val projectId = project.id
@@ -505,8 +492,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 aiClient.streamChat(
                     config = config,
                     messages = Prompts.bibleMessages(novelName, searchData.results, searchData.summary),
-                    temperature = 0.7,
-                    maxTokens = 4096,
+                    temperature = 0.5,
+                    maxTokens = 6000,
                     fallbackLabel = "生成设定圣经失败",
                 ).collect { chunk ->
                     accumulated += chunk
@@ -546,167 +533,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         startBibleGeneration(force = true)
     }
 
-    fun toggleBibleSection(section: String) {
-        _bibleState.update { state ->
-            val next = state.expandedSections.toMutableSet()
-            if (!next.add(section)) next.remove(section)
-            state.copy(expandedSections = next)
-        }
-    }
-
-    fun startCheckScreen() {
-        if (_project.value?.bible == null) return
-        _checkState.update { it.copy(skipRepair = false) }
-        _screen.value = Screen.CHECK
-        ensureCheckAndRepair()
-    }
-
-    /** 从体检/冒险页回看已生成的设定圣经，不触发重新生成。 */
+    /** 从冒险页回看已生成的设定圣经，不触发重新生成。 */
     fun openBible() {
         if (_project.value?.bible == null) return
         _screen.value = Screen.BIBLE
-    }
-
-    /** 从冒险页回看体检报告，不触发重新体检。 */
-    fun openCheck() {
-        if (_project.value?.check == null) return
-        _screen.value = Screen.CHECK
-    }
-
-    // ------------------------------------------------------------------
-    // 漏洞体检与修补
-    // ------------------------------------------------------------------
-
-    private fun ensureCheckAndRepair() {
-        val document = _project.value ?: return
-        if (document.check == null) {
-            runCheck()
-        } else if (document.repair == null && !_checkState.value.skipRepair) {
-            runRepair()
-        }
-    }
-
-    private fun runCheck(force: Boolean = false) {
-        if (!force && checkJob?.isActive == true) return
-        val project = _project.value ?: return
-        val bible = project.bible ?: return
-        if (force) checkJob?.cancel()
-        val projectId = project.id
-        _checkState.update { it.copy(isChecking = true, rawText = "", error = "") }
-
-        checkJob = viewModelScope.launch {
-            try {
-                val config = requireConfig()
-                var accumulated = ""
-                aiClient.streamChat(
-                    config = config,
-                    messages = Prompts.checkMessages(bible),
-                    temperature = 0.5,
-                    maxTokens = 4096,
-                    fallbackLabel = "漏洞体检失败",
-                ).collect { chunk ->
-                    accumulated += chunk
-                    _checkState.update { it.copy(rawText = accumulated) }
-                }
-                if (_project.value?.id != projectId) return@launch
-
-                val check = normalizeCheck(parseJsonLoose(accumulated))
-                if (check != null) {
-                    updateProject { it.copy(check = check) }
-                    _checkState.update { it.copy(isChecking = false, error = "") }
-                    if (!_checkState.value.skipRepair) runRepair()
-                } else {
-                    val message = if (accumulated.isBlank()) {
-                        "AI 服务未返回内容，请检查服务配置后重试"
-                    } else {
-                        "AI 返回的体检报告无法解析，请重试"
-                    }
-                    _checkState.update { it.copy(isChecking = false, error = message) }
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                if (_project.value?.id == projectId) {
-                    _checkState.update {
-                        it.copy(
-                            isChecking = false,
-                            error = getAiErrorMessage(error, "漏洞体检失败，请检查 AI 服务配置后重试"),
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    fun retryCheck() {
-        _checkState.update { it.copy(checkAttempt = it.checkAttempt + 1, error = "") }
-        runCheck(force = true)
-    }
-
-    private fun runRepair(force: Boolean = false) {
-        if (!force && repairJob?.isActive == true) return
-        val project = _project.value ?: return
-        val bible = project.bible ?: return
-        val check = project.check ?: return
-        if (force) repairJob?.cancel()
-        val projectId = project.id
-        _checkState.update { it.copy(isRepairing = true, repairRaw = "", repairError = "") }
-
-        repairJob = viewModelScope.launch {
-            try {
-                val config = requireConfig()
-                var accumulated = ""
-                aiClient.streamChat(
-                    config = config,
-                    messages = Prompts.repairMessages(bible, check),
-                    temperature = 0.4,
-                    maxTokens = 4096,
-                    fallbackLabel = "修补设定失败",
-                ).collect { chunk ->
-                    accumulated += chunk
-                    _checkState.update { it.copy(repairRaw = accumulated) }
-                }
-                if (_project.value?.id != projectId) return@launch
-
-                val repair = normalizeRepair(parseJsonLoose(accumulated))
-                if (repair != null) {
-                    updateProject { it.copy(repair = repair) }
-                    _checkState.update { it.copy(isRepairing = false, repairError = "") }
-                } else {
-                    val message = if (accumulated.isBlank()) {
-                        "AI 服务未返回修补内容，可以跳过修补直接开始冒险"
-                    } else {
-                        "修补结果无法解析，可以重试或跳过修补"
-                    }
-                    _checkState.update { it.copy(isRepairing = false, repairError = message) }
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                if (_project.value?.id == projectId) {
-                    _checkState.update {
-                        it.copy(
-                            isRepairing = false,
-                            repairError = getAiErrorMessage(
-                                error,
-                                "修补设定失败，可以重试或跳过修补直接开始冒险",
-                            ),
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    fun retryRepair() {
-        _checkState.update {
-            it.copy(skipRepair = false, repairAttempt = it.repairAttempt + 1, repairError = "")
-        }
-        runRepair(force = true)
-    }
-
-    fun skipRepair() {
-        _checkState.update { it.copy(skipRepair = true, repairError = "") }
     }
 
     fun startGameScreen() {
@@ -774,7 +604,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         resetGameUi()
         openingKey = null
-        loadedCheckKey = null
+        loadedVerifyKey = null
         epilogueAutoKey = null
         _screen.value = Screen.GAME
         prepareGame()
@@ -819,7 +649,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val config = requireConfig()
                 val document = _project.value ?: return@launch
-                val bible = document.repair?.bible ?: document.bible
+                val bible = document.bible
                     ?: throw AiServiceException("缺少设定圣经数据")
                 var accumulated = ""
                 aiClient.streamChat(
@@ -878,7 +708,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     resetCustomDraft()
                     startTypewriter(introText)
                 }
-                loadedCheckKey = null
+                loadedVerifyKey = null
                 epilogueAutoKey = null
             } catch (error: CancellationException) {
                 throw error
@@ -936,7 +766,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 aiClient.streamChat(
                     config = config,
                     messages = Prompts.gameActionMessages(
-                        bible = document.repair?.bible ?: document.bible ?: throw AiServiceException("缺少设定圣经数据"),
+                        bible = document.bible ?: throw AiServiceException("缺少设定圣经数据"),
                         gameState = game,
                         stats = book.stats,
                         goal = book.goal,
@@ -1085,9 +915,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (_gameState.value.isProcessing || actionRunning) return
 
         val guardKey = "${book.character.name}:${book.startedAt}"
-        if (loadedCheckKey == guardKey) return
+        if (loadedVerifyKey == guardKey) return
         val lastNarration = book.history.lastOrNull { it.type == HistoryType.NARRATION } ?: return
-        loadedCheckKey = guardKey
+        loadedVerifyKey = guardKey
 
         goalCheckJob?.cancel()
         goalCheckJob = viewModelScope.launch {
@@ -1177,7 +1007,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (force) epilogueJob?.cancel()
         val document = _project.value ?: return
         val key = document.activeAdventureKey ?: return
-        val bible = document.repair?.bible ?: document.bible ?: return
+        val bible = document.bible ?: return
         if (source.goal.title.isBlank()) return
 
         val requestId = ++epilogueRequestId
@@ -1341,7 +1171,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     aiClient.chatOnce(
                         config = config,
                         messages = Prompts.polishMessages(
-                            bible = document.repair?.bible ?: document.bible ?: SettingBible(),
+                            bible = document.bible ?: SettingBible(),
                             character = book.character,
                             goal = book.goal,
                             scene = game.currentScene,
@@ -1499,8 +1329,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun cancelAllJobs() {
         saveJob?.cancel()
         bibleJob?.cancel()
-        checkJob?.cancel()
-        repairJob?.cancel()
         cancelGameJobs()
     }
 
@@ -1520,7 +1348,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         actionRunning = false
         epilogueRequestId++
         openingKey = null
-        loadedCheckKey = null
+        loadedVerifyKey = null
         epilogueAutoKey = null
     }
 
@@ -1531,10 +1359,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun resetTransientStates() {
         _homeState.value = HomeUiState()
         _bibleState.value = BibleUiState()
-        _checkState.value = CheckUiState()
         resetGameUi()
         openingKey = null
-        loadedCheckKey = null
+        loadedVerifyKey = null
         epilogueAutoKey = null
         epilogueRequestId++
     }

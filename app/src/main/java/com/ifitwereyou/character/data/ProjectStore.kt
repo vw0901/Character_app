@@ -12,8 +12,8 @@ class ProjectStoreException(message: String) : IllegalArgumentException(message)
 /**
  * 项目存档的本地文件持久化。
  *
- * 每个项目保存为 `files/projects/<id>.json` 一个文件，包含检索结果、设定圣经、
- * 体检报告、修补结果与冒险进度。写入使用临时文件替换，并限制 id 只能是安全字符。
+ * 每个项目保存为 `files/projects/<id>.json` 一个文件，包含检索结果、设定圣经与冒险进度。
+ * 写入使用临时文件替换，并限制 id 只能是安全字符。
  * 文件格式与原项目后端一致，因此两边的存档可以互相导入。
  */
 class ProjectStore(private val root: File) {
@@ -73,8 +73,6 @@ class ProjectStore(private val root: File) {
                         appVersion = record.opt("appVersion") as? String ?: "",
                         hasSearch = record.opt("search") != null,
                         hasBible = record.opt("bible") != null,
-                        hasCheck = record.opt("check") != null,
-                        hasRepair = record.opt("repair") != null,
                         hasAdventure = hasAdventure(record),
                     ),
                 )

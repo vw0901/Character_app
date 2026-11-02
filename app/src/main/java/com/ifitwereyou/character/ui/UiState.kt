@@ -4,7 +4,7 @@ import com.ifitwereyou.character.ai.AiConfig
 import com.ifitwereyou.character.ai.DEFAULT_PRESET_ID
 import com.ifitwereyou.character.ai.initialSettingsForm
 
-enum class Screen { HOME, BIBLE, CHECK, GAME, SETTINGS }
+enum class Screen { HOME, BIBLE, GAME, SETTINGS }
 
 enum class NoticeKind { SUCCESS, ERROR, INFO }
 
@@ -21,19 +21,6 @@ data class BibleUiState(
     val rawText: String = "",
     val error: String = "",
     val attempt: Int = 0,
-    val expandedSections: Set<String> = setOf("worldview", "powerSystem", "characters"),
-)
-
-data class CheckUiState(
-    val isChecking: Boolean = false,
-    val isRepairing: Boolean = false,
-    val rawText: String = "",
-    val repairRaw: String = "",
-    val error: String = "",
-    val repairError: String = "",
-    val skipRepair: Boolean = false,
-    val checkAttempt: Int = 0,
-    val repairAttempt: Int = 0,
 )
 
 data class GameUiState(

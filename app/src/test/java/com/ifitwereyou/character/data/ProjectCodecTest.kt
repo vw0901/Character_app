@@ -45,17 +45,52 @@ class ProjectCodecTest {
     }
 
     @Test
-    fun normalizesCheckAndStrengths() {
-        val check = normalizeCheck(
+    fun parsesOriginalFlavorFields() {
+        val bible = normalizeBible(
             JSONObject(
-                """{"overallScore":82,"summary":"整体稳定","issues":[{"title":"漏洞","severity":"中"}],
-                   "strengths":["动机清晰"]}""",
+                """{
+                  "novelName":"测试小说",
+                  "tone":"冷峻克制的硬科幻，短句、少形容词",
+                  "themes":["孤独","文明","选择"],
+                  "locations":[{"name":"古桥","description":"雨幕中的石桥","significance":"初遇之地"}],
+                  "keyItems":[{"name":"断剑","description":"缺口很旧","significance":"故人信物"}],
+                  "iconic_scenes":[{"title":"雨夜过桥","description":"你第一次看见守桥人",
+                    "impact":"全书基调在此定下"}],
+                  "quotes":[{"text":"不要回头。","speaker":"守桥人","context":"送别时"}]
+                }""",
             ),
         )
-        assertNotNull(check)
-        assertEquals(82, check!!.overallScore)
-        assertEquals("漏洞", check.issues.first().title)
-        assertEquals(listOf("动机清晰"), check.strengths)
+        assertNotNull(bible)
+        assertEquals("冷峻克制的硬科幻，短句、少形容词", bible!!.tone)
+        assertEquals(listOf("孤独", "文明", "选择"), bible.themes)
+        assertEquals("古桥", bible.locations.first().name)
+        assertEquals("断剑", bible.keyItems.first().name)
+        assertEquals("雨夜过桥", bible.iconicScenes.first().title)
+        assertEquals("不要回头。", bible.quotes.first().text)
+        assertEquals("守桥人", bible.quotes.first().speaker)
+    }
+
+    @Test
+    fun flavorFieldsSurviveExportRoundtrip() {
+        val bible = SettingBible(
+            novelName = "三体",
+            tone = "冷峻克制",
+            themes = listOf("文明", "生存"),
+            iconicScenes = listOf(IconicScene("古筝行动", "船体被切成薄片", "冷酷的想象力")),
+            quotes = listOf(ClassicQuote("不要回答！", "叶文洁", "收到外星信号时")),
+            locations = listOf(KeyLocation("红岸基地", "山中的天线阵", "一切开始的地方")),
+            keyItems = listOf(KeyItem("三体游戏", "一款 VR 游戏", "文明的隐喻")),
+        )
+        val exported = ProjectCodec.encodeProject(createProjectFromBible(bible))
+        val imported = parseImportedJson(exported)
+        val restored = imported.project.bible
+        assertNotNull(restored)
+        assertEquals("冷峻克制", restored!!.tone)
+        assertEquals(listOf("文明", "生存"), restored.themes)
+        assertEquals("不要回答！", restored.quotes.first().text)
+        assertEquals("古筝行动", restored.iconicScenes.first().title)
+        assertEquals("红岸基地", restored.locations.first().name)
+        assertEquals("三体游戏", restored.keyItems.first().name)
     }
 
     @Test

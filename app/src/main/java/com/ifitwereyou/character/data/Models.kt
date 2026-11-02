@@ -75,45 +75,54 @@ data class Mystery(
     val theories: String = "",
 )
 
+/** 小说里的重要地点，冒险时用来维持原著的地理记忆。 */
+data class KeyLocation(
+    val name: String = "",
+    val description: String = "",
+    val significance: String = "",
+)
+
+/** 贯穿剧情的关键物品或道具。 */
+data class KeyItem(
+    val name: String = "",
+    val description: String = "",
+    val significance: String = "",
+)
+
+/** 读者记得住的名场面，是「原著味道」最直接的载体。 */
+data class IconicScene(
+    val title: String = "",
+    val description: String = "",
+    val impact: String = "",
+)
+
+/** 尽量保留原句的经典台词；speaker / context 用于提示模型在合适时机化用。 */
+data class ClassicQuote(
+    val text: String = "",
+    val speaker: String = "",
+    val context: String = "",
+)
+
 data class SettingBible(
     val novelName: String = "",
     val author: String = "",
     val status: String = "",
     val genre: String = "",
     val synopsis: String = "",
+    /** 叙事基调与语言风格，例如「冷峻的硬科幻，短句、克制」。 */
+    val tone: String = "",
+    /** 3-6 个主题关键词。 */
+    val themes: List<String> = emptyList(),
     val worldview: Worldview = Worldview(),
     val powerSystem: PowerSystem = PowerSystem(),
     val factions: List<Faction> = emptyList(),
     val characters: List<BibleCharacter> = emptyList(),
     val timeline: List<TimelineEvent> = emptyList(),
     val mysteries: List<Mystery> = emptyList(),
-)
-
-data class CheckIssue(
-    val category: String = "",
-    val severity: String = "",
-    val title: String = "",
-    val description: String = "",
-    val fix: String = "",
-)
-
-data class CheckResult(
-    val overallScore: Int = 0,
-    val summary: String = "",
-    val issues: List<CheckIssue> = emptyList(),
-    val strengths: List<String> = emptyList(),
-)
-
-data class RepairFix(
-    val issue: String = "",
-    val action: String = "",
-    val field: String = "",
-)
-
-data class RepairResult(
-    val summary: String = "",
-    val appliedFixes: List<RepairFix> = emptyList(),
-    val bible: SettingBible = SettingBible(),
+    val locations: List<KeyLocation> = emptyList(),
+    val keyItems: List<KeyItem> = emptyList(),
+    val iconicScenes: List<IconicScene> = emptyList(),
+    val quotes: List<ClassicQuote> = emptyList(),
 )
 
 data class SceneChoice(
@@ -285,8 +294,6 @@ data class ProjectDocument(
     val updatedAt: String = "",
     val search: SearchData? = null,
     val bible: SettingBible? = null,
-    val check: CheckResult? = null,
-    val repair: RepairResult? = null,
     val adventures: Map<String, AdventureState> = emptyMap(),
     val activeAdventureKey: String? = null,
 )
@@ -298,8 +305,6 @@ data class ProjectSummary(
     val appVersion: String,
     val hasSearch: Boolean,
     val hasBible: Boolean,
-    val hasCheck: Boolean,
-    val hasRepair: Boolean,
     val hasAdventure: Boolean,
 )
 

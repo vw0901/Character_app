@@ -357,7 +357,6 @@ private fun ProjectRow(
 ) {
     val status = when {
         item.hasAdventure -> "冒险进行中"
-        item.hasRepair -> "已修补设定"
         item.hasBible -> "设定圣经"
         else -> "检索结果"
     }
