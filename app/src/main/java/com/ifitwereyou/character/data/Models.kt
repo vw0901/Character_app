@@ -33,6 +33,8 @@ data class SearchData(
     val novelName: String = "",
     val summary: String = "",
     val results: List<SearchResult> = emptyList(),
+    /** 配置了 Tavily 但至少一路检索失败时为 true，用于提示用户当前摘要可能缺少联网资料。 */
+    val searchFailed: Boolean = false,
 )
 
 data class Worldview(

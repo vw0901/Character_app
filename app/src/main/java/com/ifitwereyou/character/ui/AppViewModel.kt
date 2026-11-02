@@ -17,6 +17,8 @@ import com.ifitwereyou.character.ai.SettingsStore
 import com.ifitwereyou.character.ai.emptyAiConfig
 import com.ifitwereyou.character.ai.getAiErrorMessage
 import com.ifitwereyou.character.ai.initialSettingsForm
+import com.ifitwereyou.character.ai.normalizeBaseUrl
+import com.ifitwereyou.character.ai.validateAiParams
 import com.ifitwereyou.character.data.AdventureOutcome
 import com.ifitwereyou.character.data.AdventureState
 import com.ifitwereyou.character.data.CharacterChoice
@@ -125,15 +127,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var endingRequestId = 0
     private var epilogueRequestId = 0
     private var actionRunning = false
+    private var goalCheckWarned = false
     private var settingsReturnScreen = Screen.HOME
     private var bibleReturnScreen = Screen.HOME
     private var epilogueReturnScreen = Screen.GAME
 
     init {
         val saved = settingsStore.read()
+        val form = saved ?: initialSettingsForm()
         _settingsState.value = SettingsUiState(
-            form = saved ?: initialSettingsForm(),
+            form = form,
             selectedPresetId = saved?.let { matchPreset(it) } ?: DEFAULT_PRESET_ID,
+            params = form.toModelParamsInput(),
         )
         viewModelScope.launch { refreshProjects() }
     }
@@ -159,6 +164,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val config = requireConfig()
                 val data = searchService.searchNovel(config, name)
+                if (data.searchFailed) {
+                    _messages.tryEmit("部分联网检索失败，已用模型知识补全；结果可能缺少最新资料")
+                }
                 enterProject(createProjectFromSearch(data), saveImmediately = false)
                 _saveState.value = SaveState.SAVING
                 scheduleSave()
@@ -340,6 +348,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _settingsState.value = SettingsUiState(
             form = form,
             selectedPresetId = saved?.let { matchPreset(it) } ?: DEFAULT_PRESET_ID,
+            params = form.toModelParamsInput(),
         )
         _screen.value = Screen.SETTINGS
     }
@@ -374,6 +383,62 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSearchProvider(provider: String) = updateSettingsForm { it.copy(searchProvider = provider) }
 
+    fun setTemperature(value: String) =
+        updateParams({ it.copy(temperature = value.trim().toDoubleOrNull()) }) {
+            it.copy(temperature = value)
+        }
+
+    fun setTopP(value: String) =
+        updateParams({ it.copy(topP = value.trim().toDoubleOrNull()) }) { it.copy(topP = value) }
+
+    fun setMaxTokens(value: String) =
+        updateParams({ it.copy(maxTokens = value.trim().toIntOrNull()) }) {
+            it.copy(maxTokens = value)
+        }
+
+    fun setFrequencyPenalty(value: String) =
+        updateParams({ it.copy(frequencyPenalty = value.trim().toDoubleOrNull()) }) {
+            it.copy(frequencyPenalty = value)
+        }
+
+    fun setPresencePenalty(value: String) =
+        updateParams({ it.copy(presencePenalty = value.trim().toDoubleOrNull()) }) {
+            it.copy(presencePenalty = value)
+        }
+
+    fun setSeed(value: String) =
+        updateParams({ it.copy(seed = value.trim().toIntOrNull()) }) { it.copy(seed = value) }
+
+    fun setExtraParams(value: String) = updateParams({ it.copy(extraParams = value) }) {
+        it.copy(extraParams = value)
+    }
+
+    fun resetModelParams() {
+        updateParams(
+            {
+                it.copy(
+                    temperature = null,
+                    topP = null,
+                    maxTokens = null,
+                    frequencyPenalty = null,
+                    presencePenalty = null,
+                    seed = null,
+                    extraParams = "",
+                )
+            },
+            { ModelParamsInput() },
+        )
+    }
+
+    private fun updateParams(
+        transform: (AiConfig) -> AiConfig,
+        input: (ModelParamsInput) -> ModelParamsInput,
+    ) {
+        _settingsState.update { state ->
+            state.copy(form = transform(state.form), params = input(state.params))
+        }
+    }
+
     private fun updateSettingsForm(transform: (AiConfig) -> AiConfig) {
         _settingsState.update { state ->
             val next = transform(state.form)
@@ -390,6 +455,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val form = _settingsState.value.form.trimmed()
         if (form.baseUrl.isEmpty()) {
             _settingsState.update { it.copy(notice = Notice(NoticeKind.ERROR, "请填写 Base URL")) }
+            return
+        }
+        try {
+            normalizeBaseUrl(form.baseUrl)
+        } catch (error: AiConfigurationException) {
+            _settingsState.update {
+                it.copy(notice = Notice(NoticeKind.ERROR, getAiErrorMessage(error, "Base URL 格式不正确")))
+            }
             return
         }
         if (_settingsState.value.busy != null) return
@@ -449,15 +522,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveSettings() {
-        val form = _settingsState.value.form.trimmed()
+        var form = _settingsState.value.form.trimmed()
         val validation = validateSettings(form)
         if (validation != null) {
             _settingsState.update { it.copy(notice = Notice(NoticeKind.ERROR, validation)) }
             return
         }
+        // 保存前规范化并写回表单，避免同一地址被重复拼接 /v1。
+        form = try {
+            form.copy(baseUrl = normalizeBaseUrl(form.baseUrl))
+        } catch (error: AiConfigurationException) {
+            _settingsState.update {
+                it.copy(notice = Notice(NoticeKind.ERROR, getAiErrorMessage(error, "Base URL 格式不正确")))
+            }
+            return
+        }
         settingsStore.write(form)
         _settingsState.update {
-            it.copy(form = form, notice = Notice(NoticeKind.SUCCESS, "设置已保存到本机"))
+            it.copy(
+                form = form,
+                params = form.toModelParamsInput(),
+                notice = Notice(NoticeKind.SUCCESS, "设置已保存到本机"),
+            )
         }
     }
 
@@ -469,6 +555,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 selectedPresetId = "custom",
                 models = emptyList(),
                 notice = Notice(NoticeKind.INFO, "已清除本机 AI 配置"),
+                params = ModelParamsInput(),
             )
         }
     }
@@ -476,7 +563,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun validateSettings(config: AiConfig): String? {
         if (config.baseUrl.isBlank()) return "请填写 Base URL"
         if (config.model.isBlank()) return "请填写模型名称"
-        return null
+        validateParamText()?.let { return it }
+        try {
+            normalizeBaseUrl(config.baseUrl)
+        } catch (error: AiConfigurationException) {
+            return getAiErrorMessage(error, "Base URL 格式不正确")
+        }
+        return validateAiParams(config)
+    }
+
+    /** 输入框里的中间态（例如只敲了一个「-」）不能悄悄当成「未设置」。 */
+    private fun validateParamText(): String? {
+        val params = _settingsState.value.params
+        fun check(name: String, raw: String, integer: Boolean = false): String? {
+            if (raw.isBlank()) return null
+            val valid = if (integer) {
+                raw.trim().toIntOrNull() != null
+            } else {
+                raw.trim().toDoubleOrNull() != null
+            }
+            return if (valid) null else "$name 需要填写数字，留空则使用场景默认值"
+        }
+        return check("Temperature", params.temperature)
+            ?: check("Top P", params.topP)
+            ?: check("最大输出 Token", params.maxTokens, integer = true)
+            ?: check("Frequency Penalty", params.frequencyPenalty)
+            ?: check("Presence Penalty", params.presencePenalty)
+            ?: check("Seed", params.seed, integer = true)
     }
 
     private fun matchPreset(config: AiConfig): String =
@@ -511,8 +624,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     temperature = 0.5,
                     maxTokens = 6000,
                     fallbackLabel = "生成设定圣经失败",
+                    failOnTruncation = true,
                 ).collect { chunk ->
-                    accumulated += chunk
+                    accumulated += chunk.content
                     _bibleState.update { it.copy(rawText = accumulated) }
                 }
                 if (_project.value?.id != projectId) return@launch
@@ -623,6 +737,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     maxTokens = 1800,
                     callTimeoutSeconds = 90,
                     fallbackLabel = "构思故事栏失败",
+                    failOnTruncation = true,
                 )
                 val options = normalizeStoryOptions(parseJsonLoose(raw))
                 if (options.size < 2) {
@@ -779,7 +894,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     temperature = 0.9,
                     maxTokens = 2048,
                     fallbackLabel = "生成游戏初始场景失败",
-                ).collect { accumulated += it }
+                    failOnTruncation = true,
+                ).collect { chunk -> accumulated += chunk.content }
 
                 if (_project.value?.id != projectId) return@launch
 
@@ -903,7 +1019,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     temperature = 0.9,
                     maxTokens = 1600,
                     fallbackLabel = "处理游戏动作失败",
-                ).collect { accumulated += it }
+                    failOnTruncation = true,
+                ).collect { chunk -> accumulated += chunk.content }
 
                 if (_project.value?.id != projectId) return@launch
 
@@ -1008,7 +1125,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         scene: com.ifitwereyou.character.data.Scene?,
         history: List<HistoryEntry>,
     ): com.ifitwereyou.character.data.GoalCheckVerdict? {
-        val config = settingsStore.read() ?: return null
+        val saved = settingsStore.read() ?: return null
+        // 判定任务预算固定为 512，不跟随用户的创作输出上限。
+        val config = saved.withoutSamplingOverrides().copy(maxTokens = null)
         return try {
             val raw = withTimeout(GOAL_CHECK_TIMEOUT_MS) {
                 aiClient.chatOnce(
@@ -1022,12 +1141,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             normalizeGoalCheck(parseJsonLoose(raw))
         } catch (_: TimeoutCancellationException) {
+            warnGoalCheckFallback("目标判定超时，已改用文本线索判断")
             null
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
+            warnGoalCheckFallback("目标判定调用失败，已改用文本线索判断")
             null
         }
+    }
+
+    private fun warnGoalCheckFallback(message: String) {
+        if (goalCheckWarned) return
+        goalCheckWarned = true
+        _messages.tryEmit(message)
     }
 
     /** 打开旧存档时补做一次目标复核，避免「目标早已完成」的局继续下去。 */
@@ -1168,7 +1295,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         callTimeoutSeconds = 120,
                         fallbackLabel = "书写结局总结失败",
                     ).collect { chunk ->
-                        accumulated += chunk
+                        accumulated += chunk.content
                         if (requestId == endingRequestId) {
                             _gameState.update { it.copy(endingDraft = accumulated) }
                         }
@@ -1316,7 +1443,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         callTimeoutSeconds = 120,
                         fallbackLabel = "书写后日谈失败",
                     ).collect { chunk ->
-                        accumulated += chunk
+                        accumulated += chunk.content
                         if (requestId == epilogueRequestId) {
                             _gameState.update { it.copy(epilogueDraft = accumulated) }
                         }
@@ -1454,7 +1581,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val raw = withTimeout(POLISH_TIMEOUT_MS) {
                     aiClient.chatOnce(
-                        config = config,
+                        config = config.copy(maxTokens = null),
                         messages = Prompts.polishMessages(
                             bible = document.bible ?: SettingBible(),
                             character = book.character,
@@ -1643,6 +1770,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resetGameUi() {
+        goalCheckWarned = false
         _gameState.value = GameUiState()
     }
 

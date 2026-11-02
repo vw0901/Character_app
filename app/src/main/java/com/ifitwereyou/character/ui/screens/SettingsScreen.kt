@@ -43,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ifitwereyou.character.BuildConfig
 import com.ifitwereyou.character.ai.AI_PRESETS
 import com.ifitwereyou.character.ai.AiPreset
+import com.ifitwereyou.character.ai.isInsecurePublicBaseUrl
 import com.ifitwereyou.character.ui.AppViewModel
 import com.ifitwereyou.character.ui.SettingsBusy
 import com.ifitwereyou.character.ui.components.AppSpinner
@@ -270,6 +271,112 @@ fun SettingsScreen(viewModel: AppViewModel) {
             }
         }
 
+        Spacer(Modifier.height(14.dp))
+        CardBox(backgroundColor = Card) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "模型参数（可选）",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Parchment,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "留空表示使用各场景默认值；采样参数统一覆盖创作类请求，最大输出 Token 填写后覆盖场景上限（推理模型可调高）。服务商不支持时会自动降级重试。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Muted,
+                        )
+                    }
+                    TextButton(onClick = viewModel::resetModelParams) {
+                        Text("恢复默认", style = MaterialTheme.typography.labelSmall, color = Amber)
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ParamField(
+                        label = "Temperature",
+                        value = state.params.temperature,
+                        placeholder = "空 = 场景默认",
+                        keyboardType = KeyboardType.Decimal,
+                        onValueChange = viewModel::setTemperature,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ParamField(
+                        label = "Top P",
+                        value = state.params.topP,
+                        placeholder = "空 = 场景默认",
+                        keyboardType = KeyboardType.Decimal,
+                        onValueChange = viewModel::setTopP,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ParamField(
+                        label = "最大输出 Token",
+                        value = state.params.maxTokens,
+                        placeholder = "空 = 场景默认",
+                        keyboardType = KeyboardType.Number,
+                        onValueChange = viewModel::setMaxTokens,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ParamField(
+                        label = "Seed",
+                        value = state.params.seed,
+                        placeholder = "空 = 不固定",
+                        keyboardType = KeyboardType.Number,
+                        onValueChange = viewModel::setSeed,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ParamField(
+                        label = "Frequency Penalty",
+                        value = state.params.frequencyPenalty,
+                        placeholder = "-2.0 ~ 2.0",
+                        keyboardType = KeyboardType.Decimal,
+                        onValueChange = viewModel::setFrequencyPenalty,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ParamField(
+                        label = "Presence Penalty",
+                        value = state.params.presencePenalty,
+                        placeholder = "-2.0 ~ 2.0",
+                        keyboardType = KeyboardType.Decimal,
+                        onValueChange = viewModel::setPresencePenalty,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                OutlinedTextField(
+                    value = state.params.extraParams,
+                    onValueChange = viewModel::setExtraParams,
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 6,
+                    label = { Text("自定义请求参数（JSON，可选）") },
+                    placeholder = { Text("{\"reasoning_effort\":\"low\"}") },
+                    supportingText = {
+                        Text(
+                            "会合并进请求体，适合 response_format、reasoning_effort、stop 等服务商专有参数；不能覆盖 model / messages / stream。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Muted,
+                        )
+                    },
+                    colors = appTextFieldColors(),
+                    shape = MaterialTheme.shapes.medium,
+                )
+
+                if (isInsecurePublicBaseUrl(state.form.baseUrl)) {
+                    Text(
+                        "⚠ 当前 Base URL 是公网明文 HTTP，API Key 会以明文经过网络。建议改用 https://，或确认这是可信局域网。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Crimson,
+                    )
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(9.dp),
@@ -363,6 +470,28 @@ private fun PresetCard(
             )
         }
     }
+}
+
+@Composable
+private fun ParamField(
+    label: String,
+    value: String,
+    placeholder: String,
+    keyboardType: KeyboardType,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        singleLine = true,
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        colors = appTextFieldColors(),
+        shape = MaterialTheme.shapes.medium,
+    )
 }
 
 @Composable

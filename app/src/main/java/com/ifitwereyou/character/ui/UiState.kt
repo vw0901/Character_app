@@ -52,10 +52,32 @@ data class GameUiState(
 
 enum class SettingsBusy { MODELS, TEST }
 
+/** 设置页里参数的原始文本，便于用户输入「1.」这类中间状态。 */
+data class ModelParamsInput(
+    val temperature: String = "",
+    val topP: String = "",
+    val maxTokens: String = "",
+    val frequencyPenalty: String = "",
+    val presencePenalty: String = "",
+    val seed: String = "",
+    val extraParams: String = "",
+)
+
+fun AiConfig.toModelParamsInput(): ModelParamsInput = ModelParamsInput(
+    temperature = temperature?.toString().orEmpty(),
+    topP = topP?.toString().orEmpty(),
+    maxTokens = maxTokens?.toString().orEmpty(),
+    frequencyPenalty = frequencyPenalty?.toString().orEmpty(),
+    presencePenalty = presencePenalty?.toString().orEmpty(),
+    seed = seed?.toString().orEmpty(),
+    extraParams = extraParams,
+)
+
 data class SettingsUiState(
     val form: AiConfig = initialSettingsForm(),
     val selectedPresetId: String = DEFAULT_PRESET_ID,
     val models: List<String> = emptyList(),
     val busy: SettingsBusy? = null,
     val notice: Notice? = null,
+    val params: ModelParamsInput = initialSettingsForm().toModelParamsInput(),
 )

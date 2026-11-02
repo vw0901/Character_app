@@ -43,17 +43,23 @@ class SearchService(
         )
         var results: List<SearchResult> = emptyList()
         var tavilyAnswer = ""
+        var searchFailed = false
 
-        if (config.searchProvider == "tavily" && config.tavilyApiKey.isNotBlank()) {
-            // 三个角度并行检索，避免串行等待；单路失败不影响其余结果。
-            val responses = coroutineScope {
-                queries.map { query -> async { safeTavilySearch(config, query) } }.awaitAll()
-            }.filterNotNull()
-            results = mergeResults(responses.flatMap { it.first })
-            tavilyAnswer = responses
-                .mapNotNull { (_, answer) -> answer.takeIf { it.isNotBlank() } }
-                .joinToString("\n\n")
-                .trim()
+        if (config.searchProvider.trim().lowercase() == "tavily") {
+            if (config.tavilyApiKey.isBlank()) {
+                searchFailed = true
+            } else {
+                // 三个角度并行检索，避免串行等待；单路失败不影响其余结果。
+                val responses = coroutineScope {
+                    queries.map { query -> async { safeTavilySearch(config, query) } }.awaitAll()
+                }.filterNotNull()
+                searchFailed = responses.size < queries.size
+                results = mergeResults(responses.flatMap { it.first })
+                tavilyAnswer = responses
+                    .mapNotNull { (_, answer) -> answer.takeIf { it.isNotBlank() } }
+                    .joinToString("\n\n")
+                    .trim()
+            }
         }
 
         val summary = if (results.isNotEmpty()) {
@@ -82,7 +88,12 @@ class SearchService(
             Prompts.parseFallbackSummary(reply)
         }
 
-        return SearchData(novelName = novelName, summary = summary, results = results)
+        return SearchData(
+            novelName = novelName,
+            summary = summary,
+            results = results,
+            searchFailed = searchFailed,
+        )
     }
 
     private suspend fun safeTavilySearch(

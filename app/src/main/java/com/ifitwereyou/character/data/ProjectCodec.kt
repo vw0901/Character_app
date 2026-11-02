@@ -105,6 +105,7 @@ object ProjectCodec {
     fun searchToJson(search: SearchData): JSONObject = JSONObject().apply {
         put("novelName", search.novelName)
         put("summary", search.summary)
+        put("searchFailed", search.searchFailed)
         put("results", JSONArray().apply {
             search.results.forEach { result ->
                 put(JSONObject().apply {
@@ -334,7 +335,12 @@ fun normalizeSearchData(value: Any?, fallbackName: String = ""): SearchData? {
     }
     val novelName = text(record.opt("novelName"), fallbackName)
     if (novelName.isBlank() && results.isEmpty()) return null
-    return SearchData(novelName = novelName, summary = text(record.opt("summary")), results = results)
+    return SearchData(
+        novelName = novelName,
+        summary = text(record.opt("summary")),
+        results = results,
+        searchFailed = record.opt("searchFailed") == true,
+    )
 }
 
 fun normalizeBible(value: Any?, fallbackName: String = ""): SettingBible? {
