@@ -24,9 +24,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ifitwereyou.character.ui.components.AppBackdrop
 import com.ifitwereyou.character.ui.screens.BibleScreen
+import com.ifitwereyou.character.ui.screens.EpilogueScreen
 import com.ifitwereyou.character.ui.screens.GameScreen
 import com.ifitwereyou.character.ui.screens.HomeScreen
 import com.ifitwereyou.character.ui.screens.SettingsScreen
+import com.ifitwereyou.character.ui.screens.StoryPickerScreen
 import com.ifitwereyou.character.ui.theme.Amber
 import com.ifitwereyou.character.ui.theme.Card
 import com.ifitwereyou.character.ui.theme.Parchment
@@ -79,7 +81,17 @@ fun CharacterApp(viewModel: AppViewModel) {
                     onExport = { exportLauncher.launch(viewModel.suggestedExportName()) },
                 )
 
+                Screen.STORIES -> StoryPickerScreen(
+                    viewModel = viewModel,
+                    onExport = { exportLauncher.launch(viewModel.suggestedExportName()) },
+                )
+
                 Screen.GAME -> GameScreen(
+                    viewModel = viewModel,
+                    onExport = { exportLauncher.launch(viewModel.suggestedExportName()) },
+                )
+
+                Screen.EPILOGUE -> EpilogueScreen(
                     viewModel = viewModel,
                     onExport = { exportLauncher.launch(viewModel.suggestedExportName()) },
                 )

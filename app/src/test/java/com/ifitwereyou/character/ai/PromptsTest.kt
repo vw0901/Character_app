@@ -17,6 +17,7 @@ import com.ifitwereyou.character.data.SearchResult
 import com.ifitwereyou.character.data.SettingBible
 import com.ifitwereyou.character.data.StatValues
 import com.ifitwereyou.character.data.StoryGoal
+import com.ifitwereyou.character.data.StoryOption
 import com.ifitwereyou.character.data.StoryTimeline
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -78,11 +79,39 @@ class PromptsTest {
     }
 
     @Test
+    fun storyOptionsPromptUsesCharacterAndAsksForSeveralStories() {
+        val messages = Prompts.storyOptionMessages(bible, character)
+        assertTrue(messages[0].content.contains("3-4 条"))
+        assertTrue(messages[0].content.contains("estimatedTurns"))
+        assertTrue(messages[1].content.contains("林澈"))
+        assertTrue(messages[1].content.contains("测试小说"))
+        assertTrue(messages[1].content.contains("古桥体系"))
+    }
+
+    @Test
     fun gamePromptUsesCharacterIdentity() {
         val messages = Prompts.gameMessages(bible, character)
         assertTrue(messages[1].content.contains("扮演角色: 林澈"))
         assertTrue(messages[1].content.contains("第一人称"))
         assertTrue(messages[1].content.contains("测试小说"))
+    }
+
+    @Test
+    fun openingPromptLocksStoryTimelineAndSingleHealthBar() {
+        val story = StoryOption(
+            id = "story_1",
+            title = "雨夜过桥",
+            summary = "替守桥人守最后一夜。",
+            opening = "雨声里，我踏上石桥。",
+            estimatedTurns = 8,
+            totalDays = 22,
+        )
+        val messages = Prompts.gameMessages(bible, character, story)
+        assertTrue(messages[1].content.contains("雨夜过桥"))
+        assertTrue(messages[1].content.contains("22 天"))
+        assertTrue(messages[0].content.contains("生命值固定从满值 100"))
+        assertTrue(!messages[0].content.contains("\"power\""))
+        assertTrue(!messages[0].content.contains("\"reputation\""))
     }
 
     @Test
@@ -98,12 +127,23 @@ class PromptsTest {
             choiceText = "我掀开斗笠",
             character = character,
             history = history,
+            story = StoryOption(
+                id = "story_1",
+                title = "雨夜过桥",
+                summary = "替守桥人守最后一夜。",
+                opening = "雨声里，我踏上石桥。",
+                estimatedTurns = 8,
+                totalDays = 20,
+            ),
         )
         val content = custom[1].content
         assertTrue(content.contains("玩家自己写下的行动: 我掀开斗笠"))
         assertTrue(content.contains("最终目标: 找到妹妹"))
         assertTrue(content.contains("剩余 17 天"))
         assertTrue(content.contains("最近剧情"))
+        assertTrue(content.contains("本条故事线: 雨夜过桥"))
+        assertTrue(custom[0].content.contains("statsChange 只写健康值"))
+        assertTrue(custom[0].content.contains("生命低于 30"))
     }
 
     @Test
@@ -171,6 +211,36 @@ class PromptsTest {
     }
 
     @Test
+    fun endingSummaryPromptStopsAtTheEndingMoment() {
+        val messages = Prompts.endingSummaryMessages(
+            bible = bible,
+            character = character,
+            story = StoryOption(
+                id = "story_1",
+                title = "雨夜过桥",
+                summary = "替守桥人守最后一夜。",
+                opening = "雨声里，我踏上石桥。",
+                estimatedTurns = 8,
+                totalDays = 20,
+            ),
+            goal = StoryGoal("找到妹妹", "在血月前带她离开"),
+            timeline = StoryTimeline("血月", 20, 18),
+            outcome = "failure",
+            outcomeReason = "生命值归零，冒险失败",
+            endingText = "雨声盖住了最后一声呼吸。",
+            history = listOf(HistoryEntry(HistoryType.NARRATION, "你倒在桥心。")),
+        )
+        val system = messages[0].content
+        val user = messages[1].content
+        assertTrue(system.contains("不写此后多年"))
+        assertTrue(system.contains("不要输出标题"))
+        assertTrue(user.contains("雨夜过桥"))
+        assertTrue(user.contains("生命值归零"))
+        assertTrue(user.contains("你倒在桥心"))
+        assertTrue(user.contains("请写这一局的结局总结"))
+    }
+
+    @Test
     fun epiloguePromptCarriesOutcomeAndHistory() {
         val messages = Prompts.epilogueMessages(
             bible = bible,
@@ -181,12 +251,15 @@ class PromptsTest {
             outcomeReason = "达成最终目标：找到妹妹",
             endingText = "你们在血月升起前离开。",
             history = listOf(HistoryEntry(HistoryType.NARRATION, "你找到了妹妹。")),
+            endingSummary = "你在最后一夜找到了妹妹，代价是守桥人的命。",
         )
         val content = messages[1].content
         assertTrue(content.contains("成功达成最终目标"))
         assertTrue(content.contains("故事停在第 18 / 20 天"))
         assertTrue(content.contains("你找到了妹妹"))
+        assertTrue(content.contains("结局页总结"))
         assertTrue(messages[0].content.contains("成功结局写目标达成后的余波"))
+        assertTrue(messages[0].content.contains("不要复述目标与决战过程"))
     }
 
     @Test

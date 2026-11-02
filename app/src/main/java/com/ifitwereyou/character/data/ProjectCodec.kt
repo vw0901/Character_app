@@ -43,6 +43,7 @@ private fun baseProject(novelName: String): ProjectDocument {
         updatedAt = timestamp,
         search = null,
         bible = null,
+        storyOptions = emptyMap(),
         adventures = emptyMap(),
         activeAdventureKey = null,
     )
@@ -89,6 +90,11 @@ object ProjectCodec {
         json.put("updatedAt", document.updatedAt)
         putNullable(json, "search", document.search?.let { searchToJson(it) })
         putNullable(json, "bible", document.bible?.let { bibleToJson(it) })
+        json.put("storyOptions", JSONObject().apply {
+            document.storyOptions.forEach { (key, options) ->
+                put(key, JSONArray().apply { options.forEach { put(storyOptionToJson(it)) } })
+            }
+        })
         val adventures = JSONObject()
         document.adventures.forEach { (key, adventure) -> adventures.put(key, adventureToJson(adventure)) }
         json.put("adventures", adventures)
@@ -207,10 +213,17 @@ object ProjectCodec {
         })
     }
 
+    fun storyOptionToJson(story: StoryOption): JSONObject = JSONObject().apply {
+        put("id", story.id)
+        put("title", story.title)
+        put("summary", story.summary)
+        put("opening", story.opening)
+        put("estimatedTurns", story.estimatedTurns)
+        put("totalDays", story.totalDays)
+    }
+
     fun statsToJson(stats: StatValues): JSONObject = JSONObject().apply {
         put("health", stats.health)
-        put("power", stats.power)
-        put("reputation", stats.reputation)
     }
 
     fun characterToJson(character: CharacterChoice): JSONObject = JSONObject().apply {
@@ -281,6 +294,7 @@ object ProjectCodec {
 
     fun adventureToJson(adventure: AdventureState): JSONObject = JSONObject().apply {
         put("character", characterToJson(adventure.character))
+        putNullable(this, "story", adventure.story?.let { storyOptionToJson(it) })
         putNullable(this, "gameState", adventure.gameState?.let { gameStateToJson(it) })
         put("stats", statsToJson(adventure.stats))
         put("history", historyToJson(adventure.history))
@@ -293,6 +307,7 @@ object ProjectCodec {
         put("timeline", timelineToJson(adventure.timeline))
         put("outcome", adventure.outcome.wire)
         put("outcomeReason", adventure.outcomeReason)
+        put("endingSummary", adventure.endingSummary)
         put("epilogue", adventure.epilogue)
     }
 }
@@ -471,24 +486,51 @@ fun normalizeBible(value: Any?, fallbackName: String = ""): SettingBible? {
     return bible.takeIf { recognizable }
 }
 
+private fun normalizeStoryOption(value: Any?, index: Int, keepId: Boolean = false): StoryOption? {
+    val record = asRecord(value) ?: return null
+    val title = text(record.opt("title") ?: record.opt("name"))
+    val summary = text(record.opt("summary") ?: record.opt("description"))
+    if (title.isBlank() || summary.isBlank()) return null
+    val turns = numberValue(
+        record.opt("estimatedTurns") ?: record.opt("estimated_turns") ?: record.opt("turns"),
+        8.0,
+    ).roundToInt()
+    val days = numberValue(record.opt("totalDays") ?: record.opt("total_days") ?: record.opt("days"), 20.0)
+        .roundToInt()
+    val safeDays = clamp(days, MIN_TOTAL_DAYS, MAX_TOTAL_DAYS)
+    val storedId = text(record.opt("id"))
+    return StoryOption(
+        id = if (keepId && SAFE_ID_REGEX.matches(storedId)) storedId else "story_${index + 1}",
+        title = title,
+        summary = summary,
+        opening = text(record.opt("opening") ?: record.opt("hook")),
+        estimatedTurns = clamp(turns, 5, 12),
+        totalDays = safeDays,
+    )
+}
+
+/** 解析 AI 给出的故事栏；id 由客户端重新编号，避免模型输出重复或非法键。 */
+fun normalizeStoryOptions(value: Any?): List<StoryOption> {
+    val array = when (value) {
+        is JSONArray -> value
+        is JSONObject -> value.optArray("stories", "storyOptions", "story_options")
+        else -> null
+    } ?: return emptyList()
+    return (0 until array.length())
+        .mapNotNull { index -> normalizeStoryOption(array.opt(index), index) }
+        .distinctBy { it.title }
+        .take(5)
+}
+
 private fun normalizeStats(value: Any?): StatValues {
     val record = asRecord(value) ?: JSONObject()
-    fun read(key: String, fallback: Int): Int =
-        clamp(numberValue(record.opt(key), fallback.toDouble()).roundToInt(), 0, 100)
-    return StatValues(
-        health = read("health", 100),
-        power = read("power", 50),
-        reputation = read("reputation", 50),
-    )
+    val health = clamp(numberValue(record.opt("health"), 100.0).roundToInt(), 0, 100)
+    return StatValues(health = health)
 }
 
 private fun normalizeStatsChange(record: JSONObject): StatChange {
     val changes = asRecord(record.opt("statsChange") ?: record.opt("stats_change")) ?: JSONObject()
-    return StatChange(
-        health = numberValue(changes.opt("health")).roundToInt(),
-        power = numberValue(changes.opt("power")).roundToInt(),
-        reputation = numberValue(changes.opt("reputation")).roundToInt(),
-    )
+    return StatChange(health = numberValue(changes.opt("health")).roundToInt())
 }
 
 private fun normalizeCharacter(value: Any?): CharacterChoice? {
@@ -591,11 +633,18 @@ private fun normalizeOpeningGoal(value: Any?): StoryGoal? {
     )
 }
 
-fun normalizeGameOpening(value: Any?): GameOpening? {
+fun normalizeGameOpening(value: Any?, story: StoryOption? = null): GameOpening? {
     val record = asRecord(value) ?: return null
     val gameState = normalizeGameState(value) ?: return null
     val goal = normalizeOpeningGoal(record.opt("finalGoal") ?: record.opt("final_goal")) ?: return null
     if (gameState.currentScene.choices.isEmpty()) return null
+    val timeline = normalizeOpeningTimeline(record.opt("timeline")).let { parsed ->
+        if (story == null) parsed
+        else parsed.copy(
+            totalDays = clamp(story.totalDays, MIN_TOTAL_DAYS, MAX_TOTAL_DAYS),
+            currentDay = 1,
+        )
+    }
     return GameOpening(
         gameState = gameState.copy(
             playerCharacter = gameState.playerCharacter.copy(
@@ -603,7 +652,7 @@ fun normalizeGameOpening(value: Any?): GameOpening? {
             ),
         ),
         goal = goal,
-        timeline = normalizeOpeningTimeline(record.opt("timeline")),
+        timeline = timeline,
     )
 }
 
@@ -705,6 +754,7 @@ fun normalizeAdventure(value: Any?): AdventureState? {
 
     val adventure = AdventureState(
         character = character,
+        story = normalizeStoryOption(record.opt("story"), 0, keepId = true),
         gameState = normalizeGameState(record.opt("gameState") ?: record.opt("game_state")),
         stats = normalizeStats(record.opt("stats")),
         history = normalizeHistory(record.opt("history")),
@@ -717,6 +767,7 @@ fun normalizeAdventure(value: Any?): AdventureState? {
         timeline = normalizeStoryTimeline(record.opt("timeline")),
         outcome = normalizeOutcome(record.opt("outcome")?.toString(), isEnding),
         outcomeReason = text(record.opt("outcomeReason") ?: record.opt("outcome_reason")),
+        endingSummary = text(record.opt("endingSummary") ?: record.opt("ending_summary")),
         epilogue = text(record.opt("epilogue")),
     )
 
@@ -732,6 +783,23 @@ fun normalizeAdventure(value: Any?): AdventureState? {
         outcomeReason = reconciledReason,
         isEnding = true,
     )
+}
+
+private fun normalizeStoryOptionMap(record: JSONObject): Map<String, List<StoryOption>> {
+    val raw = asRecord(record.opt("storyOptions") ?: record.opt("story_options")) ?: return emptyMap()
+    val result = LinkedHashMap<String, List<StoryOption>>()
+    val keys = raw.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        val value = raw.opt(key)
+        val options = when (value) {
+            is JSONArray -> (0 until value.length())
+                .mapNotNull { index -> normalizeStoryOption(value.opt(index), index, keepId = true) }
+            else -> normalizeStoryOptions(value)
+        }
+        if (options.isNotEmpty()) result[key] = options.distinctBy { it.id }
+    }
+    return result
 }
 
 private fun normalizeAdventures(record: JSONObject): Pair<Map<String, AdventureState>, String?> {
@@ -760,6 +828,7 @@ fun normalizeProject(value: Any?): ProjectDocument? {
 
     val search = normalizeSearchData(record.opt("search"))
     val bible = normalizeBible(record.opt("bible"))
+    val storyOptions = normalizeStoryOptionMap(record)
     val (adventures, legacyActiveKey) = normalizeAdventures(record)
 
     if (search == null && bible == null && adventures.isEmpty()) {
@@ -782,6 +851,7 @@ fun normalizeProject(value: Any?): ProjectDocument? {
         appVersion = text(record.opt("appVersion")).ifBlank { APP_VERSION },
         search = search,
         bible = bible,
+        storyOptions = storyOptions,
         adventures = adventures,
         activeAdventureKey = storedActive.takeIf { adventures.containsKey(it) } ?: legacyActiveKey,
     )

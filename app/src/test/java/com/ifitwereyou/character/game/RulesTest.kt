@@ -42,32 +42,32 @@ class RulesTest {
     )
 
     @Test
-    fun openingStatsNeverStartsDead() {
-        assertEquals(20, openingStats(StatValues(health = 0)).health)
-        assertEquals(60, openingStats(StatValues(health = 60)).health)
+    fun openingStatsAlwaysFull() {
+        assertEquals(100, openingStats(StatValues(health = 0)).health)
+        assertEquals(100, openingStats(StatValues(health = 60)).health)
         assertEquals(100, openingStats(StatValues(health = 500)).health)
     }
 
     @Test
-    fun nonFinalStatChangesAreCapped() {
-        val base = StatValues(health = 100, power = 50, reputation = 50)
-        val next = applyStatChange(base, StatChange(health = -80, power = 80, reputation = -80))
-        assertEquals(60, next.health)
-        assertEquals(80, next.power)
-        assertEquals(20, next.reputation)
+    fun nonFinalHealthChangesArePaced() {
+        val full = StatValues(health = 100)
+        assertEquals(82, applyStatChange(full, StatChange(health = -80)).health)
+        assertEquals(100, applyStatChange(full, StatChange(health = 80)).health)
+
+        val wounded = StatValues(health = 25)
+        assertEquals(15, applyStatChange(wounded, StatChange(health = -80)).health)
+        assertEquals(45, applyStatChange(wounded, StatChange(health = 80)).health)
     }
 
     @Test
-    fun finalStatChangesAreNotCappedButClamped() {
-        val base = StatValues(health = 100, power = 50, reputation = 50)
+    fun finalHealthChangesAreNotCappedButClamped() {
+        val base = StatValues(health = 100)
         val next = applyStatChange(
             base,
-            StatChange(health = -100, power = 90, reputation = 90),
+            StatChange(health = -100),
             final = true,
         )
         assertEquals(0, next.health)
-        assertEquals(100, next.power)
-        assertEquals(100, next.reputation)
     }
 
     @Test

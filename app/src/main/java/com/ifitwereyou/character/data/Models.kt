@@ -151,16 +151,30 @@ data class GameState(
     val currentScene: Scene = Scene(),
 )
 
+/**
+ * 进入某个角色后，从「故事栏」里选中的一条故事线。
+ * 同一角色可以有多条互不影响的命运，各自保存进度。
+ */
+data class StoryOption(
+    val id: String = "",
+    val title: String = "",
+    val summary: String = "",
+    /** 给开场提示词用的切入点，不直接展示在故事卡上。 */
+    val opening: String = "",
+    val estimatedTurns: Int = 8,
+    val totalDays: Int = 20,
+) {
+    val durationLabel: String
+        get() = "约 $estimatedTurns 回合 · $totalDays 天"
+}
+
+/** 冒险里只保留一条生命值，初始为满。 */
 data class StatValues(
     val health: Int = 100,
-    val power: Int = 50,
-    val reputation: Int = 50,
 )
 
 data class StatChange(
     val health: Int = 0,
-    val power: Int = 0,
-    val reputation: Int = 0,
 )
 
 enum class HistoryType(val wire: String) {
@@ -231,6 +245,8 @@ data class AdventureSnapshot(
 
 data class AdventureState(
     val character: CharacterChoice,
+    /** 这条故事线；旧存档没有故事线时为 null。 */
+    val story: StoryOption? = null,
     val gameState: GameState? = null,
     val stats: StatValues = StatValues(),
     val history: List<HistoryEntry> = emptyList(),
@@ -243,6 +259,8 @@ data class AdventureState(
     val timeline: StoryTimeline = StoryTimeline(),
     val outcome: AdventureOutcome = AdventureOutcome.PLAYING,
     val outcomeReason: String = "",
+    /** 结局页上的故事总结，由模型在结局后生成；与可选的后日谈分开。 */
+    val endingSummary: String = "",
     val epilogue: String = "",
 )
 
@@ -294,6 +312,8 @@ data class ProjectDocument(
     val updatedAt: String = "",
     val search: SearchData? = null,
     val bible: SettingBible? = null,
+    /** 每个角色已构思的故事栏，键与冒险书一致，`characterKey`。 */
+    val storyOptions: Map<String, List<StoryOption>> = emptyMap(),
     val adventures: Map<String, AdventureState> = emptyMap(),
     val activeAdventureKey: String? = null,
 )

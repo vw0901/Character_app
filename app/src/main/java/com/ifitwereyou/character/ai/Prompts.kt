@@ -10,6 +10,7 @@ import com.ifitwereyou.character.data.SearchResult
 import com.ifitwereyou.character.data.SettingBible
 import com.ifitwereyou.character.data.StatValues
 import com.ifitwereyou.character.data.StoryGoal
+import com.ifitwereyou.character.data.StoryOption
 import com.ifitwereyou.character.data.StoryTimeline
 import com.ifitwereyou.character.data.asRecord
 import com.ifitwereyou.character.data.clipCodePoints
@@ -199,16 +200,61 @@ object Prompts {
     }
 
     // ------------------------------------------------------------------
+    // 角色故事栏
+    // ------------------------------------------------------------------
+
+    private const val STORY_OPTIONS_SYSTEM_PROMPT = """你是一位小说改编文字冒险的故事策划。玩家选定了一个角色，请为这个角色构思 3-4 条彼此差异明显、都能独立通关的故事线。
+
+请严格按以下 JSON 格式输出（不要输出 markdown 代码块标记，直接输出 JSON）：
+{
+  "stories": [
+    {
+      "title": "故事名（4-14字，有原著味道）",
+      "summary": "故事简概（40-70字，写清处境、目标与主要风险，不剧透结局）",
+      "opening": "开场切入点（20-50字，第一人称，说明故事从哪个时刻、哪个地点开始）",
+      "estimatedTurns": 8,
+      "totalDays": 20
+    }
+  ]
+}
+
+要求：
+1. 所有故事都以这个角色为主角，沿用原著的人名、地名、组织名、称谓与语言气质，不要写成通用玄幻/都市套路
+2. 故事名要像这部小说里真实存在的一段往事，不要用「命运的抉择」「新的旅程」这类空泛标题
+3. summary 必须让玩家一眼看懂：我是谁、我要做什么、最大的阻碍是什么；不要把结局写进去
+4. opening 要具体到一个可玩的瞬间，不要从「很久以前」讲起，也不要复述 summary
+5. 3-4 条故事线必须在切入时间点、地点、目标类型或人物关系上有明显差异，不能只是换一个任务名
+6. estimatedTurns 取 6-10 的整数，totalDays 取 15-30 的整数，且 totalDays 不小于 estimatedTurns；这是给玩家看的时长，也是本局时间线
+7. 每个故事的目标都要能在这段天数内、靠十来个行动完成，不要设置多年修炼或依赖无法抵达的地点
+8. 直接输出 JSON，不要包含任何其他文字"""
+
+    fun storyOptionMessages(bible: SettingBible, character: CharacterChoice): List<ChatMessage> {
+        val characterContext = buildString {
+            append("玩家选择扮演的角色：\n")
+            append("角色名: ${character.name}\n")
+            if (character.background.isNotBlank()) append("角色背景: ${character.background}\n")
+            character.abilities?.takeIf { it.isNotBlank() }?.let { append("角色能力: $it\n") }
+            character.personality?.takeIf { it.isNotBlank() }?.let { append("角色性格: $it\n") }
+            append("请只为这个角色设计故事线，不要把视角换成其他人物。")
+        }
+        val userContent = "请为以下角色设计故事栏：\n\n设定摘要: ${bibleDigest(bible)}\n\n$characterContext"
+        return listOf(
+            ChatMessage("system", STORY_OPTIONS_SYSTEM_PROMPT),
+            ChatMessage("user", userContent),
+        )
+    }
+
+    // ------------------------------------------------------------------
     // 冒险开场
     // ------------------------------------------------------------------
 
     private const val GAME_SYSTEM_PROMPT = """你是一位文字冒险游戏大师，擅长将小说设定转化为沉浸式的文字冒险游戏。
 
-根据提供的设定圣经，生成游戏的初始场景，并为玩家扮演的角色定下最终目标与时间线。
+你会收到「本条故事线」的故事名、简概、限定天数与开场切入点。请只为这一条故事线生成开场，并让玩家立刻进入那个瞬间。
 
 请严格按以下 JSON 格式输出（不要输出 markdown 代码块标记，直接输出 JSON）：
 {
-  "title": "游戏标题",
+  "title": "故事名（沿用给定故事线标题）",
   "intro": "开场引子（100-200字，有氛围感）",
   "finalGoal": {
     "title": "最终目标（20字以内，具体可判定）",
@@ -221,12 +267,7 @@ object Prompts {
   },
   "playerCharacter": {
     "name": "角色名",
-    "background": "背景故事",
-    "initialStats": {
-      "health": 100,
-      "power": 50,
-      "reputation": 50
-    }
+    "background": "背景故事"
   },
   "currentScene": {
     "id": "scene_1",
@@ -253,19 +294,23 @@ object Prompts {
 }
 
 要求：
-1. 开场要有强烈的氛围感，让玩家立刻沉浸
+1. 开场要有强烈的氛围感，从给定切入点直接切入，让玩家立刻沉浸；不要先讲前史
 2. 场景描述要生动具体，调动多种感官，且不要与 intro 重复
 3. 提供 2-4 个选项，每个选项都必须是玩家此刻立刻能执行的具体行动，不能出现空选项
-4. 角色背景要与小说世界观贴合
+4. 角色背景要与小说世界观贴合，并以这个角色自己的第一人称视角叙述
 5. finalGoal 必须为这个角色量身定制、具体可判定（例如「在祭典前找到失踪的妹妹」），不要写「变强」「活下去」这类空泛目标；description 写清楚达成与失败的判断条件
-6. finalGoal 必须是这个角色在 totalDays 天内、靠本次冒险中的若干次行动就能完成的事；不要设置需要多年修炼、时间跳跃，或依赖玩家不可能拿到的资源与地点的目标
-7. timeline 是本局故事的倒计时：label 说明时间压力来自什么事件，totalDays 取 15-30 的整数，currentDay 固定为 1
-8. playerCharacter.initialStats 三项都是 0-100 的整数：health 取 60-100，power 与 reputation 取 20-80；不要让角色一开局就濒死
+6. finalGoal 必须能在这条故事线给定的 totalDays 天内、靠十来个行动完成；不要设置需要多年修炼、时间跳跃，或依赖玩家不可能拿到的资源与地点的目标
+7. timeline.totalDays 必须等于「本条故事线」给定的天数，currentDay 固定为 1；label 说明时间压力来自什么事件
+8. 玩家生命值固定从满值 100 开始，不需要输出任何生命、战力或声望数值；后续只由每回合行动结果改变生命值
 9. 必须写出「这部小说」的味道：沿用 tone 的语言气质、人物称呼、地名、组织名与招式名；在合适的地方化用 quotes 与 iconicScenes，但不要生硬复读或把台词塞满
 10. 这是该小说的同人冒险，不是通用玄幻/都市爽文：不要出现与世界观无关的现代梗、系统面板或通用打脸桥段
 11. 直接输出 JSON，不要包含任何其他文字"""
 
-    fun gameMessages(bible: SettingBible, character: CharacterChoice?): List<ChatMessage> {
+    fun gameMessages(
+        bible: SettingBible,
+        character: CharacterChoice?,
+        story: StoryOption? = null,
+    ): List<ChatMessage> {
         val characterContext = if (character != null) {
             buildList {
                 add("玩家选择扮演以下角色进入故事：")
@@ -281,9 +326,20 @@ object Prompts {
             "玩家将以原创观察者身份进入这个世界，你可以为玩家分配一个适合世界观的自由角色身份" +
                 "（playerCharacter.name 为玩家角色名）。"
         }
+        val storyContext = story?.let {
+            """
+            |本条故事线（只能写这一条）：
+            |故事名: ${it.title}
+            |故事简概: ${it.summary}
+            |开场切入点: ${it.opening.ifBlank { "从故事简概描述的那个时刻开始" }}
+            |限定天数: ${it.totalDays} 天
+            |预估回合: 约 ${it.estimatedTurns} 回合
+            |请从切入点直接开场，把故事名用作 title，不要额外引入另一条任务线。
+            """.trimMargin()
+        }.orEmpty()
 
         val bibleJson = ProjectCodec.bibleToJson(bible).toString()
-        val userContent = "请根据以下设定圣经生成文字冒险游戏的初始场景：\n\n$bibleJson\n\n$characterContext"
+        val userContent = "请根据以下设定圣经与故事线生成文字冒险开场：\n\n$bibleJson\n\n$storyContext\n\n$characterContext"
         return listOf(
             ChatMessage("system", GAME_SYSTEM_PROMPT),
             ChatMessage("user", userContent),
@@ -324,9 +380,7 @@ object Prompts {
     ]
   },
   "statsChange": {
-    "health": 0,
-    "power": 0,
-    "reputation": 0
+    "health": 0
   },
   "daysPassed": 1,
   "goalAchieved": false,
@@ -339,16 +393,18 @@ object Prompts {
 1. 叙述要紧承「最近剧情」与玩家这次的选择，只写这次选择带来的结果与变化；不要复述已经发生过的事件，也不要把新场景的环境描写提前复述一遍
 2. 新场景要有新的发现和挑战；选项不要与上一场景重复，也不要把玩家刚做过的选择原样再给一次
 3. 每次给出 2-4 个玩家此刻立刻能执行的新选项，绝不能没有选项
-4. statsChange 是本次行动对生命/战力/声望的加减，三项都写整数，没有变化写 0
-5. 叙述与数值必须一致：轻微擦伤 -5~-10，重伤 -25~-40，休息治疗 +10~+20；不要「只是擦破皮」却扣掉 30 点生命
-6. 非结局回合的单次变化不能超出：health -40~+25，power -30~+30，reputation -30~+30；结局回合可以按结局叙述给出更大的变化
-7. daysPassed 表示这次行动消耗的天数，取 1-3 的整数；不要自己修改当前日期，前端会累加
-8. 每轮生成前先对照「最终目标 / 达成条件」核对：只要本轮 narration、currentScene.description 或 endingText 里已经在事实上完成了目标（条件全部满足，哪怕没出现「成功」二字），就必须立刻收束——goalAchieved=true、isEnding=true、endingType="success"，并在 endingText 写出成功结局；不能因为想继续写新场景而把它设为 false，也不能把已经完成的目标留到下一轮
-9. 如果本次 statsChange 会让生命值降到 0 或以下，isEnding=true、endingType="failure"，并写出失败结局；生命归零由前端最终裁定
-10. 时间线耗尽也由前端裁定失败，你不要因为剩余天数少就提前结束故事；但当剩余天数 ≤ 3 时，选项必须提供一条能直接冲向最终目标的路径
-11. 如果这次是玩家自己写下的行动（ID 以 custom 开头），必须让它真的发生：能做成就写过程与代价，做不到就写受阻、失败或引出新的麻烦；既不能无视它，也不能替玩家追加他没有写过的举动
-12. 保持原著的叙事语气与用词习惯（见设定摘要的 tone / quotes / iconicScenes）：人物说话方式、地名、组织名、招式名不要漂移；可以化用经典台词，但每轮最多一处，且要贴合情境
-13. 除第 8、9 条的情况外，isEnding 必须为 false；直接输出 JSON，不要包含任何其他文字"""
+4. statsChange 只写健康值 health 一项，没有变化写 0；这是本次行动对生命值的加减
+5. 生命值从 100 开始，玩的是「慢慢被消耗」而不是「两下归零」：无伤写 0，擦伤 -3~-8，重伤 -10~-18，休息或治疗 +5~+12
+6. 叙述与数值必须一致：只是紧张、被瞪一眼、赶路累了都不扣血；真正受伤才扣血，并且要写出受伤的来源
+7. 不要每回合都扣血：连续扣血两三回合后，要给一个喘息、治疗或安全脱身的机会；生命低于 30 时，选项里必须至少有一条撤退、治疗或求援的路
+8. 客户端会限制单回合生命变化：高血量时最多 -18、低血量时最多 -10，治疗最多 +12（濒危时 +20）。请让数值自然落在这些范围内，不要依赖一次扣光
+9. 非结局回合不要给出超过上限的数值；如果本次行动会让生命值降到 0 或以下，isEnding=true、endingType="failure"，并写出失败结局；生命归零由前端最终裁定
+10. daysPassed 表示这次行动消耗的天数，取 1-3 的整数；不要自己修改当前日期，前端会累加
+11. 每轮生成前先对照「最终目标 / 达成条件」核对：只要本轮 narration、currentScene.description 或 endingText 里已经在事实上完成了目标（条件全部满足，哪怕没出现「成功」二字），就必须立刻收束——goalAchieved=true、isEnding=true、endingType="success"，并在 endingText 写出成功结局；不能因为想继续写新场景而把它设为 false，也不能把已经完成的目标留到下一轮
+12. 时间线耗尽也由前端裁定失败，你不要因为剩余天数少就提前结束故事；但当剩余天数 ≤ 3 时，选项必须提供一条能直接冲向最终目标的路径
+13. 如果这次是玩家自己写下的行动（ID 以 custom 开头），必须让它真的发生：能做成就写过程与代价，做不到就写受阻、失败或引出新的麻烦；既不能无视它，也不能替玩家追加他没有写过的举动
+14. 保持原著的叙事语气与用词习惯（见设定摘要的 tone / quotes / iconicScenes）：人物说话方式、地名、组织名、招式名不要漂移；可以化用经典台词，但每轮最多一处，且要贴合情境
+15. 除第 9、11 条的情况外，isEnding 必须为 false；直接输出 JSON，不要包含任何其他文字"""
 
     fun gameActionMessages(
         bible: SettingBible,
@@ -360,6 +416,7 @@ object Prompts {
         choiceText: String,
         character: CharacterChoice?,
         history: List<HistoryEntry>,
+        story: StoryOption? = null,
     ): List<ChatMessage> {
         val characterContext = buildString {
             if (character != null) {
@@ -400,6 +457,11 @@ object Prompts {
         }
 
         val sections = mutableListOf("设定摘要: ${bibleDigest(bible).toString()}")
+        if (story != null) {
+            sections.add(
+                "本条故事线: ${story.title}\n故事简概: ${story.summary}\n开场切入点: ${story.opening}",
+            )
+        }
         val recent = formatHistory(history, limit = 8, textLimit = 300)
         if (recent.isNotEmpty()) sections.add("最近剧情（从早到晚）:\n$recent")
         sections.add("当前游戏状态: ${gameStateJson.toString()}")
@@ -541,16 +603,73 @@ confidence 取 high / medium / low。"""
     }
 
     // ------------------------------------------------------------------
+    // 结局页总结
+    // ------------------------------------------------------------------
+
+    private const val ENDING_SUMMARY_SYSTEM_PROMPT = """你是一位负责为文字冒险收束的叙事编辑。故事刚刚结束，请为这次冒险写一页「结局总结」。
+
+结局总结与后日谈不同：它只写故事停下的那一刻，不写此后多年，也不写人物余生。请把它写成 3-5 段、300-500 字的中文正文：
+1. 回望玩家以谁的身份、在什么压力下走完了这段路，点出最关键的一两次选择
+2. 明确最终目标是否达成；若达成，写清代价与失去；若失败，写清是哪一步让局面无法挽回
+3. 交代主要人物、关键线索与重要物品在结局时刻的状态
+4. 沿用这部小说的 tone 与用词习惯，可以回扣一次名场面或经典台词，但不要照抄整段
+
+要求：
+- 只根据已经发生的剧情总结，不编造未发生的事件，不替玩家追加没有做过的选择
+- 不要写「多年以后」「后来人们」这类后日谈内容，也不要抛出新的任务或悬念
+- 不要输出标题、markdown、选项或「结局总结：」之类的标签，直接输出正文
+- 失败结局也要认真收束，不要写成游戏提示或劝玩家重来"""
+
+    fun endingSummaryMessages(
+        bible: SettingBible,
+        character: CharacterChoice?,
+        story: StoryOption?,
+        goal: StoryGoal,
+        timeline: StoryTimeline,
+        outcome: String,
+        outcomeReason: String,
+        endingText: String,
+        history: List<HistoryEntry>,
+    ): List<ChatMessage> {
+        val novel = clipCodePoints(bible.novelName, 120)
+        val sections = mutableListOf<String>()
+        if (novel.isNotEmpty()) sections.add("【作品】\n$novel")
+        val tone = clipCodePoints(bible.tone, 120)
+        if (tone.isNotEmpty()) sections.add("【原著文风】\n$tone")
+        val themes = bible.themes.take(6).joinToString("、")
+        if (themes.isNotBlank()) sections.add("【主题】\n$themes")
+        if (story != null) {
+            sections.add("【本条故事线】\n${story.title}\n${story.summary}")
+        }
+
+        val storyContext = listOfNotNull(
+            formatCharacter(character),
+            formatGoal(goal),
+            formatTimeline(timeline),
+            formatOutcome(outcome, outcomeReason, endingText),
+        ).joinToString("\n\n")
+        if (storyContext.isNotEmpty()) sections.add("【这一局的事实】\n$storyContext")
+
+        val replay = formatHistory(history, limit = 14, textLimit = 400)
+        if (replay.isNotEmpty()) sections.add("【故事回顾】\n$replay")
+        sections.add("请写这一局的结局总结：只写到结局发生的那一刻，为这段冒险收束。")
+        return listOf(
+            ChatMessage("system", ENDING_SUMMARY_SYSTEM_PROMPT),
+            ChatMessage("user", sections.joinToString("\n\n")),
+        )
+    }
+
+    // ------------------------------------------------------------------
     // 后日谈
     // ------------------------------------------------------------------
 
-    private const val EPILOGUE_SYSTEM_PROMPT = """你是一位擅长写「后日谈」的叙事作家。玩家的这段文字冒险已经结束，你要为它写一篇后日谈，作为整段故事的大结局。
+    private const val EPILOGUE_SYSTEM_PROMPT = """你是一位擅长写「后日谈」的叙事作家。玩家已经读过了这段故事的结局总结，现在选择继续看「结局之后」发生了什么。
 
-后日谈写的是「结局之后」：
-1. 用 3-5 段中文，总共 500-800 字：先回望这段路上真正改变了什么，再写此后人们怎样活下去。
-2. 成功结局写目标达成后的余波：代价、失去的东西、被救下的人；失败结局写未竟之事怎样留在世界里，以及角色最后停在哪里。不要改写已经发生的结局，也不要给玩家一次翻盘的机会。
+请写一篇独立的后续，而不是把结局重讲一遍：
+1. 用 3-5 段中文，总共 500-800 字，第一段直接进入结局之后的日常，不要复述目标与决战过程。
+2. 成功结局写目标达成后的余波：代价、失去的东西、被救下的人如何继续生活；失败结局写未竟之事怎样留在世界里，以及角色最后停在哪里。不要改写已经发生的结局，也不要给玩家一次翻盘的机会。
 3. 沿用第二人称「你」，保持原著 tone 的语言气质与用词习惯；不要引入设定之外的新角色、新势力或新能力。
-4. 交代主要人物与关键线索的下落，让读者感到这个故事真的收尾了。
+4. 交代主要人物与关键线索的下落，让读者感到这个故事真的收尾了；结局总结里已经写过的句子不要重复。
 5. 可以回扣一次经典台词或名场面作为余韵，但不要照抄整段，也不要为了煽情硬塞。
 6. 可以留一点余韵，但不要抛出新的选择、任务或「下一章」式的悬念。
 7. 直接输出后日谈正文：不要标题、不要 markdown 标记、不要解释你写了什么。"""
@@ -564,6 +683,7 @@ confidence 取 high / medium / low。"""
         outcomeReason: String,
         endingText: String,
         history: List<HistoryEntry>,
+        endingSummary: String = "",
     ): List<ChatMessage> {
         val novel = clipCodePoints(bible.novelName, 120)
         val sections = mutableListOf<String>()
@@ -572,6 +692,10 @@ confidence 取 high / medium / low。"""
         if (tone.isNotEmpty()) sections.add("【原著文风】\n$tone")
         val themes = bible.themes.take(6).joinToString("、")
         if (themes.isNotBlank()) sections.add("【主题】\n$themes")
+
+        if (endingSummary.isNotBlank()) {
+            sections.add("【结局页总结（已发生，不要重讲）】\n${clipCodePoints(endingSummary, 1200)}")
+        }
 
         val storyContext = listOfNotNull(
             formatCharacter(character),

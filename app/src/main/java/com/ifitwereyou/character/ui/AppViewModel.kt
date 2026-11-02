@@ -33,12 +33,14 @@ import com.ifitwereyou.character.data.ProjectSummary
 import com.ifitwereyou.character.data.SaveState
 import com.ifitwereyou.character.data.SearchData
 import com.ifitwereyou.character.data.SettingBible
+import com.ifitwereyou.character.data.StoryOption
 import com.ifitwereyou.character.data.phaseForProject
 import com.ifitwereyou.character.data.createProjectFromSearch
 import com.ifitwereyou.character.data.normalizeBible
 import com.ifitwereyou.character.data.normalizeGameOpening
 import com.ifitwereyou.character.data.normalizeGoalCheck
 import com.ifitwereyou.character.data.normalizeSceneResult
+import com.ifitwereyou.character.data.normalizeStoryOptions
 import com.ifitwereyou.character.data.nowIso
 import com.ifitwereyou.character.data.parseImportedJson
 import com.ifitwereyou.character.data.parseJsonLoose
@@ -49,6 +51,7 @@ import com.ifitwereyou.character.game.detectGoalAchievedFromText
 import com.ifitwereyou.character.game.joinNarration
 import com.ifitwereyou.character.game.resolveOutcome
 import com.ifitwereyou.character.game.snapshotOf
+import com.ifitwereyou.character.game.storyKey
 import com.ifitwereyou.character.game.applyStatChange
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -106,20 +109,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val saveMutex = Mutex()
 
     private var bibleJob: Job? = null
+    private var storyJob: Job? = null
 
     private var openingJob: Job? = null
     private var actionJob: Job? = null
     private var goalCheckJob: Job? = null
+    private var endingJob: Job? = null
     private var epilogueJob: Job? = null
     private var typingJob: Job? = null
     private var polishJob: Job? = null
 
     private var openingKey: String? = null
     private var loadedVerifyKey: String? = null
-    private var epilogueAutoKey: String? = null
+    private var endingAutoKey: String? = null
+    private var endingRequestId = 0
     private var epilogueRequestId = 0
     private var actionRunning = false
     private var settingsReturnScreen = Screen.HOME
+    private var bibleReturnScreen = Screen.HOME
+    private var epilogueReturnScreen = Screen.GAME
 
     init {
         val saved = settingsStore.read()
@@ -295,6 +303,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 closeSettings()
                 true
             }
+            Screen.STORIES -> {
+                closeStoryPicker()
+                true
+            }
+            Screen.EPILOGUE -> {
+                closeEpilogue()
+                true
+            }
             Screen.GAME -> {
                 if (_project.value?.activeAdventureKey != null) {
                     if (!leaveBook()) {
@@ -307,7 +323,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 true
             }
             Screen.BIBLE -> {
-                goHome()
+                closeBible()
                 true
             }
         }
@@ -536,7 +552,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** 从冒险页回看已生成的设定圣经，不触发重新生成。 */
     fun openBible() {
         if (_project.value?.bible == null) return
+        if (_screen.value != Screen.BIBLE) bibleReturnScreen = _screen.value
         _screen.value = Screen.BIBLE
+    }
+
+    /** 从故事栏 / 冒险打开圣经时，返回原页面；从书架进入时则回书架。 */
+    fun closeBible() {
+        when (bibleReturnScreen) {
+            Screen.GAME, Screen.STORIES -> _screen.value = bibleReturnScreen
+            else -> goHome()
+        }
     }
 
     fun startGameScreen() {
@@ -549,18 +574,103 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // 故事书
     // ------------------------------------------------------------------
 
-    fun startBook(character: CharacterChoice) {
+    /** 选中角色后先进入故事栏；故事栏已生成过就直接复用。 */
+    fun openStoryPicker(character: CharacterChoice) {
         if (character.name.isBlank()) return
         if (_gameState.value.isInitializing) return
         cancelGameJobs()
         resetGameUi()
+        _gameState.value = GameUiState(pickerCharacter = character)
+        _screen.value = Screen.STORIES
+
+        val document = _project.value ?: return
         val key = characterKey(character)
+        if (document.storyOptions[key].isNullOrEmpty()) {
+            generateStoryOptions(character)
+        }
+    }
+
+    fun closeStoryPicker() {
+        storyJob?.cancel()
+        storyJob = null
+        resetGameUi()
+        _screen.value = Screen.GAME
+    }
+
+    fun retryStoryOptions() {
+        val character = _gameState.value.pickerCharacter ?: return
+        generateStoryOptions(character)
+    }
+
+    private fun generateStoryOptions(character: CharacterChoice) {
+        val document = _project.value ?: return
+        val bible = document.bible ?: return
+        if (_gameState.value.isGeneratingStories) return
+        val projectId = document.id
+        val key = characterKey(character)
+        storyJob?.cancel()
+        _gameState.update {
+            it.copy(isGeneratingStories = true, storyError = "")
+        }
+
+        storyJob = viewModelScope.launch {
+            try {
+                val config = requireConfig()
+                val raw = aiClient.chatOnce(
+                    config = config,
+                    messages = Prompts.storyOptionMessages(bible, character),
+                    temperature = 0.95,
+                    maxTokens = 1800,
+                    callTimeoutSeconds = 90,
+                    fallbackLabel = "构思故事栏失败",
+                )
+                val options = normalizeStoryOptions(parseJsonLoose(raw))
+                if (options.size < 2) {
+                    throw AiServiceException("AI 返回的故事线不足，请重新构思")
+                }
+                if (_project.value?.id != projectId) return@launch
+                updateProject { current ->
+                    current.copy(storyOptions = current.storyOptions + (key to options))
+                }
+                _gameState.update {
+                    if (it.pickerCharacter == character) {
+                        it.copy(isGeneratingStories = false, storyError = "")
+                    } else {
+                        it.copy(isGeneratingStories = false)
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (_project.value?.id == projectId) {
+                    _gameState.update {
+                        if (it.pickerCharacter == character) {
+                            it.copy(
+                                isGeneratingStories = false,
+                                storyError = getAiErrorMessage(error, "构思故事栏失败，请检查 AI 设置后重试"),
+                            )
+                        } else {
+                            it.copy(isGeneratingStories = false)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 从故事栏选中一条故事线；已有进度则直接续上。 */
+    fun startStory(character: CharacterChoice, story: StoryOption) {
+        if (character.name.isBlank() || story.id.isBlank()) return
+        if (_gameState.value.isInitializing) return
+        cancelGameJobs()
+        resetGameUi()
+        val key = storyKey(character, story.id)
         updateProject { document ->
             if (document.adventures.containsKey(key)) {
                 document.copy(activeAdventureKey = key)
             } else {
                 document.copy(
-                    adventures = document.adventures + (key to createAdventure(character)),
+                    adventures = document.adventures + (key to createAdventure(character, story)),
                     activeAdventureKey = key,
                 )
             }
@@ -580,7 +690,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         prepareGame()
     }
 
-    /** 返回书架；生成中不允许离开，与原项目「切换角色」按钮的禁用逻辑一致。 */
+    /** 返回角色选择；生成中不允许离开，与原项目「切换角色」按钮的禁用逻辑一致。 */
     fun leaveBook(): Boolean {
         if (_gameState.value.busy) return false
         cancelGameJobs()
@@ -588,6 +698,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         resetGameUi()
         _screen.value = Screen.GAME
         return true
+    }
+
+    /** 回到当前角色的故事栏，方便换一条命运继续。 */
+    fun backToStoryPicker() {
+        val document = _project.value ?: return
+        val key = document.activeAdventureKey ?: return
+        val book = document.adventures[key] ?: return
+        if (_gameState.value.busy) return
+        cancelGameJobs()
+        updateProject { it.copy(activeAdventureKey = null) }
+        openStoryPicker(book.character)
     }
 
     fun restartBook() {
@@ -599,13 +720,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         updateProject { current ->
             val target = current.adventures[key] ?: return@updateProject current
             current.copy(
-                adventures = current.adventures + (key to createAdventure(target.character)),
+                adventures = current.adventures + (key to createAdventure(target.character, target.story)),
             )
         }
         resetGameUi()
         openingKey = null
         loadedVerifyKey = null
-        epilogueAutoKey = null
+        endingAutoKey = null
         _screen.value = Screen.GAME
         prepareGame()
     }
@@ -624,7 +745,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             startOpening(key, book)
         } else {
             maybeVerifyLoadedBook()
-            maybeWriteEpilogue()
+            maybeGenerateEndingSummary()
         }
     }
 
@@ -654,7 +775,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 var accumulated = ""
                 aiClient.streamChat(
                     config = config,
-                    messages = Prompts.gameMessages(bible, book.character),
+                    messages = Prompts.gameMessages(bible, book.character, book.story),
                     temperature = 0.9,
                     maxTokens = 2048,
                     fallbackLabel = "生成游戏初始场景失败",
@@ -662,7 +783,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (_project.value?.id != projectId) return@launch
 
-                val opening = normalizeGameOpening(parseJsonLoose(accumulated))
+                val opening = normalizeGameOpening(parseJsonLoose(accumulated), book.story)
                 if (opening == null) {
                     val message = if (accumulated.isBlank()) {
                         "AI 服务未返回内容，请检查服务配置后重试"
@@ -701,6 +822,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         timeline = opening.timeline,
                         outcome = AdventureOutcome.PLAYING,
                         outcomeReason = "",
+                        endingSummary = "",
                         epilogue = "",
                     )
                 }
@@ -709,7 +831,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     startTypewriter(introText)
                 }
                 loadedVerifyKey = null
-                epilogueAutoKey = null
+                endingAutoKey = null
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
@@ -742,6 +864,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        goalCheckJob?.cancel()
         val projectId = document.id
         val snapshot = snapshotOf(book, game)
         val historyWithChoice = book.history + HistoryEntry(HistoryType.CHOICE, choiceText)
@@ -775,6 +898,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         choiceText = choiceText,
                         character = book.character,
                         history = book.history.takeLast(10),
+                        story = book.story,
                     ),
                     temperature = 0.9,
                     maxTokens = 1600,
@@ -844,6 +968,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         timeline = resolution.timeline,
                         outcome = resolution.outcome,
                         outcomeReason = resolution.reason,
+                        endingSummary = "",
                         epilogue = "",
                     )
                 }
@@ -871,7 +996,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(isProcessing = false, isVerifyingGoal = false)
                 }
                 if (isActiveBook(book) && activeBook()?.outcome != AdventureOutcome.PLAYING) {
-                    maybeWriteEpilogue()
+                    maybeGenerateEndingSummary()
                 }
             }
         }
@@ -921,7 +1046,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         goalCheckJob?.cancel()
         goalCheckJob = viewModelScope.launch {
-            _gameState.update { it.copy(isProcessing = true, isVerifyingGoal = true) }
+            // 读档复核只是后台兜底，不阻塞玩家看选项或继续行动。
+            _gameState.update { it.copy(isVerifyingGoal = true) }
             try {
                 val verdict = requestGoalCheck(
                     goal = book.goal,
@@ -940,9 +1066,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } finally {
-                _gameState.update { it.copy(isProcessing = false, isVerifyingGoal = false) }
+                _gameState.update { it.copy(isVerifyingGoal = false) }
                 if (activeBook()?.outcome != AdventureOutcome.PLAYING) {
-                    maybeWriteEpilogue()
+                    maybeGenerateEndingSummary()
                 }
             }
         }
@@ -983,18 +1109,169 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ------------------------------------------------------------------
-    // 后日谈
+    // 结局页总结
     // ------------------------------------------------------------------
 
-    fun maybeWriteEpilogue() {
+    fun maybeGenerateEndingSummary() {
         val book = activeBook() ?: return
         if (book.outcome == AdventureOutcome.PLAYING) return
-        if (book.gameState == null || book.turn == 0 || book.epilogue.isNotBlank()) return
-        if (epilogueJob?.isActive == true) return
+        if (book.gameState == null || book.turn == 0 || book.endingSummary.isNotBlank()) return
+        if (endingJob?.isActive == true) return
         val autoKey = "${book.character.name}:${book.startedAt}:${book.turn}:${book.outcome.wire}"
-        if (epilogueAutoKey == autoKey) return
-        epilogueAutoKey = autoKey
-        writeEpilogue(book, force = false)
+        if (endingAutoKey == autoKey) return
+        endingAutoKey = autoKey
+        writeEndingSummary(book, force = false)
+    }
+
+    fun retryEndingSummary() {
+        val book = activeBook() ?: return
+        if (book.outcome == AdventureOutcome.PLAYING) return
+        endingAutoKey = null
+        writeEndingSummary(book, force = true)
+    }
+
+    private fun writeEndingSummary(source: AdventureState, force: Boolean) {
+        if (force) endingJob?.cancel()
+        val document = _project.value ?: return
+        val key = document.activeAdventureKey ?: return
+        val bible = document.bible ?: return
+        if (source.gameState == null) return
+
+        val requestId = ++endingRequestId
+        val projectId = document.id
+        _gameState.update {
+            it.copy(isWritingEnding = true, endingError = "", endingDraft = "")
+        }
+
+        endingJob = viewModelScope.launch {
+            try {
+                val config = requireConfig()
+                var accumulated = ""
+                withTimeout(ENDING_TIMEOUT_MS) {
+                    aiClient.streamChat(
+                        config = config,
+                        messages = Prompts.endingSummaryMessages(
+                            bible = bible,
+                            character = source.character,
+                            story = source.story,
+                            goal = source.goal,
+                            timeline = source.timeline,
+                            outcome = source.outcome.wire,
+                            outcomeReason = source.outcomeReason,
+                            endingText = source.endingText.ifBlank {
+                                source.history.lastOrNull { it.type == HistoryType.NARRATION }?.text.orEmpty()
+                            },
+                            history = source.history,
+                        ),
+                        temperature = 0.72,
+                        maxTokens = 1400,
+                        callTimeoutSeconds = 120,
+                        fallbackLabel = "书写结局总结失败",
+                    ).collect { chunk ->
+                        accumulated += chunk
+                        if (requestId == endingRequestId) {
+                            _gameState.update { it.copy(endingDraft = accumulated) }
+                        }
+                    }
+                }
+
+                val summary = accumulated.trim()
+                if (summary.isEmpty()) throw AiServiceException("AI 未返回结局总结，请重试")
+                if (requestId != endingRequestId) return@launch
+
+                val current = _project.value
+                val currentBook = current?.adventures?.get(key)
+                if (current?.id != projectId ||
+                    currentBook == null ||
+                    currentBook.startedAt != source.startedAt ||
+                    currentBook.turn != source.turn ||
+                    currentBook.outcome != source.outcome
+                ) {
+                    return@launch
+                }
+
+                updateBook(key) { book ->
+                    if (book.startedAt != source.startedAt) return@updateBook book
+                    book.copy(endingSummary = summary)
+                }
+                _gameState.update { it.copy(endingDraft = "") }
+            } catch (error: TimeoutCancellationException) {
+                if (requestId == endingRequestId) {
+                    _gameState.update { it.copy(endingError = "结局总结生成超时，可以再试一次") }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (requestId == endingRequestId) {
+                    _gameState.update {
+                        it.copy(
+                            endingError = getAiErrorMessage(
+                                error,
+                                "结局总结生成失败，请检查 AI 配置后重试",
+                            ),
+                        )
+                    }
+                }
+            } finally {
+                if (requestId == endingRequestId) {
+                    _gameState.update { it.copy(isWritingEnding = false) }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 后日谈（可选）
+    // ------------------------------------------------------------------
+
+    /** 从结局页打开后日谈：已有内容直接阅读，没有则按需生成。 */
+    fun openEpilogue() {
+        val book = activeBook() ?: return
+        if (book.outcome == AdventureOutcome.PLAYING) return
+        epilogueReturnScreen = Screen.GAME
+        _screen.value = Screen.EPILOGUE
+        if (book.epilogue.isBlank() && epilogueJob?.isActive != true) {
+            writeEpilogue(book, force = false)
+        }
+    }
+
+    /** 从故事栏打开某条故事的后日谈。 */
+    fun openEpilogueForBook(key: String) {
+        val document = _project.value ?: return
+        val book = document.adventures[key] ?: return
+        if (book.outcome == AdventureOutcome.PLAYING) return
+        cancelGameJobs()
+        resetGameUi()
+        epilogueReturnScreen = Screen.STORIES
+        updateProject { it.copy(activeAdventureKey = key) }
+        _screen.value = Screen.EPILOGUE
+        val latest = _project.value?.adventures?.get(key) ?: book
+        if (latest.epilogue.isBlank() && epilogueJob?.isActive != true) {
+            writeEpilogue(latest, force = false)
+        }
+    }
+
+    fun closeEpilogue() {
+        epilogueRequestId++
+        epilogueJob?.cancel()
+        _gameState.update {
+            it.copy(
+                epilogueDraft = "",
+                epilogueError = "",
+                isWritingEpilogue = false,
+            )
+        }
+        val book = activeBook()
+        if (epilogueReturnScreen == Screen.STORIES && book != null) {
+            updateProject { it.copy(activeAdventureKey = null) }
+            resetGameUi()
+            _gameState.value = GameUiState(pickerCharacter = book.character)
+            _screen.value = Screen.STORIES
+        } else {
+            epilogueReturnScreen = Screen.GAME
+            _screen.value = Screen.GAME
+            maybeGenerateEndingSummary()
+        }
     }
 
     fun rewriteEpilogue() {
@@ -1032,6 +1309,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             outcomeReason = source.outcomeReason,
                             endingText = source.endingText,
                             history = source.history,
+                            endingSummary = source.endingSummary,
                         ),
                         temperature = 0.85,
                         maxTokens = 1600,
@@ -1101,13 +1379,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val book = document.adventures[key] ?: return
         val snapshot = book.snapshots.lastOrNull() ?: return
 
+        endingRequestId++
+        endingJob?.cancel()
         epilogueRequestId++
         epilogueJob?.cancel()
-        epilogueAutoKey = null
+        goalCheckJob?.cancel()
+        endingAutoKey = null
         polishJob?.cancel()
         typingJob?.cancel()
         _gameState.update {
             it.copy(
+                endingDraft = "",
+                endingError = "",
+                isWritingEnding = false,
                 epilogueDraft = "",
                 epilogueError = "",
                 isWritingEpilogue = false,
@@ -1134,6 +1418,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 timeline = snapshot.timeline,
                 outcome = snapshot.outcome,
                 outcomeReason = snapshot.outcomeReason,
+                endingSummary = "",
                 epilogue = "",
             )
         }
@@ -1333,23 +1618,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun cancelGameJobs() {
+        storyJob?.cancel()
         openingJob?.cancel()
         actionJob?.cancel()
         goalCheckJob?.cancel()
+        endingJob?.cancel()
         epilogueJob?.cancel()
         typingJob?.cancel()
         polishJob?.cancel()
+        storyJob = null
         openingJob = null
         actionJob = null
         goalCheckJob = null
+        endingJob = null
         epilogueJob = null
         typingJob = null
         polishJob = null
         actionRunning = false
+        endingRequestId++
         epilogueRequestId++
         openingKey = null
         loadedVerifyKey = null
-        epilogueAutoKey = null
+        endingAutoKey = null
     }
 
     private fun resetGameUi() {
@@ -1362,8 +1652,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         resetGameUi()
         openingKey = null
         loadedVerifyKey = null
-        epilogueAutoKey = null
+        endingAutoKey = null
+        endingRequestId++
         epilogueRequestId++
+        epilogueReturnScreen = Screen.GAME
+        bibleReturnScreen = Screen.HOME
     }
 
     private suspend fun refreshProjects() {
@@ -1405,6 +1698,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private const val TYPING_INTERVAL_MS = 18L
         private const val TYPING_START_DELAY_MS = 120L
         private const val GOAL_CHECK_TIMEOUT_MS = 20_000L
+        private const val ENDING_TIMEOUT_MS = 90_000L
         private const val EPILOGUE_TIMEOUT_MS = 120_000L
         private const val POLISH_TIMEOUT_MS = 30_000L
         private const val MAX_CUSTOM_CHARS = 200

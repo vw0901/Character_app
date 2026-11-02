@@ -122,7 +122,7 @@ fun BibleScreen(
         AppTopBar(
             title = "设定圣经",
             subtitle = "《$novelTitle》 · ${saveState.label}",
-            onBack = viewModel::goHome,
+            onBack = viewModel::closeBible,
             actions = {
                 TopBarIcon(
                     icon = Icons.Outlined.Share,

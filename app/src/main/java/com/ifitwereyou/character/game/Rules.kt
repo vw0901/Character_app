@@ -10,25 +10,23 @@ import com.ifitwereyou.character.data.StoryTimeline
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** 所有属性都收敛到 0-100。 */
+/** 生命值收敛到 0-100。 */
 const val STAT_MIN = 0
 const val STAT_MAX = 100
 
-val DEFAULT_STATS = StatValues(health = 100, power = 50, reputation = 50)
+/** 新故事一律满血开局。 */
+val DEFAULT_STATS = StatValues(health = STAT_MAX)
 
 /**
- * 单次行动对属性的影响上限。
- * 非结局回合封顶，避免「擦破皮掉 80 血」「一句好话回满血」这类不合理的加减；
- * 结局回合不截断，否则「当场阵亡」会出现一个还剩半管血的尸体。
+ * 每回合生命值变化的体感上限（非结局回合）。
+ * 不做硬性「一刀 40 血」的斩杀，让 100 点生命至少能撑过若干次失误；
+ * 濒危时反而放宽治疗、收紧伤害，避免低血量直接进入死亡螺旋。
  */
-val STAT_CHANGE_LIMITS = mapOf(
-    "health" to (-40 to 25),
-    "power" to (-30 to 30),
-    "reputation" to (-30 to 30),
-)
-
-/** 开局生命值下限：还没开始就先判死，等于生成了一个无法完成的局。 */
-const val OPENING_HEALTH_MIN = 20
+const val HEALTH_LOSS_CAP = 18
+const val HEALTH_GAIN_CAP = 12
+const val LOW_HEALTH_THRESHOLD = 30
+const val LOW_HEALTH_LOSS_CAP = 10
+const val LOW_HEALTH_GAIN_CAP = 20
 
 /** 一局故事的天数区间，与提示词、README 中的「15-30 天」保持一致。 */
 const val MIN_TOTAL_DAYS = 15
@@ -51,33 +49,23 @@ fun clampDaysPerAction(value: Double): Int {
     return clamp(days, MIN_DAYS_PER_ACTION, MAX_DAYS_PER_ACTION)
 }
 
-/** 把属性值收敛成 0-100 的整数；healthFloor 用来保证开局不是「已死」。 */
-fun sanitizeStats(value: StatValues?, healthFloor: Int = STAT_MIN): StatValues {
-    val input = value ?: DEFAULT_STATS
-    return StatValues(
-        health = clamp(input.health, healthFloor, STAT_MAX),
-        power = clamp(input.power, STAT_MIN, STAT_MAX),
-        reputation = clamp(input.reputation, STAT_MIN, STAT_MAX),
-    )
-}
-
-/** 开局属性：生命值至少 OPENING_HEALTH_MIN，避免一开局就注定的失败局。 */
-fun openingStats(value: StatValues?): StatValues = sanitizeStats(value, OPENING_HEALTH_MIN)
+/** 开场血条固定为满，不再沿用模型给的初始值。 */
+fun openingStats(value: StatValues? = null): StatValues = StatValues(health = STAT_MAX)
 
 fun applyStatChange(
     base: StatValues,
     change: StatChange,
     final: Boolean = false,
 ): StatValues {
-    fun step(key: String, raw: Int): Int {
-        val (min, max) = STAT_CHANGE_LIMITS.getValue(key)
-        return if (final) clamp(raw, -STAT_MAX, STAT_MAX) else clamp(raw, min, max)
+    val low = base.health <= LOW_HEALTH_THRESHOLD
+    val loss = if (low) LOW_HEALTH_LOSS_CAP else HEALTH_LOSS_CAP
+    val gain = if (low) LOW_HEALTH_GAIN_CAP else HEALTH_GAIN_CAP
+    val delta = if (final) {
+        clamp(change.health, -STAT_MAX, STAT_MAX)
+    } else {
+        clamp(change.health, -loss, gain)
     }
-    return StatValues(
-        health = clamp(base.health + step("health", change.health), STAT_MIN, STAT_MAX),
-        power = clamp(base.power + step("power", change.power), STAT_MIN, STAT_MAX),
-        reputation = clamp(base.reputation + step("reputation", change.reputation), STAT_MIN, STAT_MAX),
-    )
+    return StatValues(health = clamp(base.health + delta, STAT_MIN, STAT_MAX))
 }
 
 fun isDead(stats: StatValues): Boolean = stats.health <= 0

@@ -3,6 +3,7 @@ package com.ifitwereyou.character.data
 import com.ifitwereyou.character.ai.SettingsStore
 import com.ifitwereyou.character.game.characterKey
 import com.ifitwereyou.character.game.createAdventure
+import com.ifitwereyou.character.game.storyKey
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -94,6 +95,74 @@ class ProjectCodecTest {
     }
 
     @Test
+    fun storyOptionsAreParsedAndRenumbered() {
+        val options = normalizeStoryOptions(
+            JSONObject(
+                """{"stories":[
+                   {"id":"x","title":"雨夜过桥","summary":"替守桥人守最后一夜","opening":"雨声里，我踏上桥",
+                    "estimatedTurns":8,"totalDays":20},
+                   {"id":"x","title":"灯下旧信","summary":"从一封没有署名的信开始","opening":"灯芯爆了一下",
+                    "turns":6,"days":16}
+                 ]}""",
+            ),
+        )
+        assertEquals(2, options.size)
+        assertEquals("story_1", options[0].id)
+        assertEquals("story_2", options[1].id)
+        assertEquals("雨夜过桥", options[0].title)
+        assertEquals(8, options[0].estimatedTurns)
+        assertEquals(16, options[1].totalDays)
+    }
+
+    @Test
+    fun storyOptionsAndAdventureStorySurviveRoundtrip() {
+        val character = CharacterChoice(mode = CharacterMode.EXISTING, name = "林澈", background = "游侠")
+        val story = StoryOption(
+            id = "story_2",
+            title = "雨夜过桥",
+            summary = "替守桥人守最后一夜，等一个不该回来的人。",
+            opening = "雨声里，我踏上石桥。",
+            estimatedTurns = 8,
+            totalDays = 22,
+        )
+        val key = storyKey(character, story.id)
+        val project = createProjectFromBible(SettingBible(novelName = "测试小说")).copy(
+            storyOptions = mapOf("bible:林澈" to listOf(story)),
+            adventures = mapOf(key to createAdventure(character, story)),
+            activeAdventureKey = key,
+        )
+
+        val restored = parseImportedJson(ProjectCodec.encodeProject(project)).project
+        assertEquals("story_2", restored.storyOptions.getValue("bible:林澈").first().id)
+        assertEquals("雨夜过桥", restored.adventures.getValue(key).story?.title)
+        assertEquals(22, restored.adventures.getValue(key).timeline.totalDays)
+        assertEquals(100, restored.adventures.getValue(key).stats.health)
+        assertEquals(key, restored.activeAdventureKey)
+    }
+
+    @Test
+    fun endingSummaryAndEpilogueStaySeparateAcrossRoundtrip() {
+        val character = CharacterChoice(mode = CharacterMode.CUSTOM, name = "旅人")
+        val story = StoryOption(id = "story_1", title = "古桥", summary = "一段测试故事", totalDays = 20)
+        val key = storyKey(character, story.id)
+        val book = createAdventure(character, story).copy(
+            outcome = AdventureOutcome.SUCCESS,
+            isEnding = true,
+            endingSummary = "你在桥边走完了这段路。",
+            epilogue = "多年以后，桥边多了一盏灯。",
+        )
+        val project = createProjectFromBible(SettingBible(novelName = "测试小说")).copy(
+            adventures = mapOf(key to book),
+            activeAdventureKey = key,
+        )
+
+        val restored = parseImportedJson(ProjectCodec.encodeProject(project)).project
+            .adventures.getValue(key)
+        assertEquals("你在桥边走完了这段路。", restored.endingSummary)
+        assertEquals("多年以后，桥边多了一盏灯。", restored.epilogue)
+    }
+
+    @Test
     fun openingTimelineIsClampedAndStatsHealed() {
         val opening = normalizeGameOpening(
             JSONObject(
@@ -111,8 +180,7 @@ class ProjectCodecTest {
         assertNotNull(opening)
         assertEquals(15, opening!!.timeline.totalDays)
         assertEquals(1, opening.timeline.currentDay)
-        assertEquals(20, opening.gameState.playerCharacter.initialStats.health)
-        assertEquals(100, opening.gameState.playerCharacter.initialStats.power)
+        assertEquals(100, opening.gameState.playerCharacter.initialStats.health)
     }
 
     @Test
